@@ -221,8 +221,9 @@ bool connectMQTT() {
 
         g_mqttClient.subscribe(TOPIC_STATUS, 1);
         Serial.printf("[MQTT] 订阅: %s (QoS 1)\n", TOPIC_STATUS);
-        g_mqttClient.subscribe(TOPIC_COMMAND, 1);
-        Serial.printf("[MQTT] 订阅: %s (QoS 1)\n", TOPIC_COMMAND);
+        // 注意：不订阅 ai/led/command——那是灯条设备的命令通道，
+        // 原 Pi 扩展在状态变化时会发 chase:yellow 等命令，会覆盖看板状态
+        // （cmd 状态仍可通过 ai/status 的 {"state":"cmd"} 触发）
 
         String onlinePayload = "{\"state\":\"idle\"}";
         g_mqttClient.publish(TOPIC_STATUS, onlinePayload.c_str(), true);

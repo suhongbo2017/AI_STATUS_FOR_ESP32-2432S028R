@@ -15,6 +15,8 @@
 // 板载 RGB LED（绿/蓝）做在线/离线指示（GPIO4 红灯与 TFT_RST 共用，不驱动）
 class DisplayPanel {
 public:
+    DisplayPanel() : m_shine(&m_tft) {}
+
     void begin();
     void setState(const String& key, const String& message);
     void setNetworkStatus(bool wifiOk, bool mqttOk);
@@ -23,16 +25,17 @@ public:
 
 private:
     void renderMid(uint32_t now, bool force);  // 中间状态块（背景+文字）
-    void renderFlow(uint32_t now);             // running 流水波（区域局部刷新）
+    void renderShine(uint32_t now);            // running 流光亮点（透明 Sprite）
     void renderFrame();                        // 上下白色边框
     void renderStatusIndicators();
     void refreshClock();
-    uint16_t stateBg(float lum) const;         // 状态纯色块背景（支持呼吸亮度/离线）
+    uint16_t stateBg(float lum) const;         // 状态纯色块背景（支持呼吸亮度）
     uint16_t textFg() const;                   // 对比色文字（亮底黑字/暗底白字）
     bool isRunning() const;
     bool isWaiting() const;
 
     TFT_eSPI m_tft;
+    TFT_eSprite m_shine;   // running 流光亮点动画层（透明黑底）
     bool m_dimmed = false;
     bool m_wifiOk = false;
     bool m_mqttOk = false;

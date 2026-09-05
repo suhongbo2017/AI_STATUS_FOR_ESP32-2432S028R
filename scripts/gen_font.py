@@ -69,7 +69,7 @@ for i, uni in enumerate(uni24):
     font24_data[i * 72 : i * 72 + 72] = render_glyph(uni, 24, font24)
 
 # ---- 72x72: 中间区状态大字（仅状态词） ----
-HUGE_WORDS = "等待运行输入完成出错未知"
+HUGE_WORDS = "等待运行输入完成出错未知执行命令中"
 font72 = load_font(72)
 uni72 = sorted({ord(c) for c in HUGE_WORDS if ord(c) > 0x7F})
 font72_data = bytearray(len(uni72) * 72 * 9)

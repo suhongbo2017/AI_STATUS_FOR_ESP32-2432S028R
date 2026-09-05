@@ -5,16 +5,12 @@
 #define FRAME_COLOR  0xFFFF    // 上下边框：纯白
 #define FRAME_TEXT   0x0000    // 边框内文字：黑
 #define OFF_TEXT     0xCC0000  // 离线警示（白底上的深红）
-#define WAVE_COLOR   0x0000    // 流水波：黑（黄底）
 
 // 边框：上下各 12% 屏高（240*12% ≈ 29px）
 static constexpr int FRAME_H = 29;
 static constexpr int MID_Y = FRAME_H;                   // 中间区上界 29
 static constexpr int MID_BOT = SCREEN_HEIGHT - FRAME_H; // 中间区下界 211
 static constexpr int MID_H = MID_BOT - MID_Y;           // 182
-
-static constexpr int WAVE_Y = 44;     // 流水波带 → 44..66
-static constexpr int WAVE_H = 22;
 
 // CYD 板载 RGB LED：低电平点亮
 static void ledWrite(uint8_t pin, bool on) {
@@ -47,6 +43,9 @@ void DisplayPanel::begin() {
     m_tft.setRotation(SCREEN_ROTATION);
     m_tft.fillScreen(FRAME_COLOR);
 
+    m_shine.createSprite(SCREEN_WIDTH, MID_H);  // 流光亮点层（覆盖中间区）
+    m_shine.setSwapBytes(true);
+
     pinMode(LED_GREEN_PIN, OUTPUT);
     pinMode(LED_BLUE_PIN, OUTPUT);
     ledWrite(LED_GREEN_PIN, false);
@@ -61,7 +60,6 @@ uint16_t DisplayPanel::stateBg(float lum) const {
 }
 
 uint16_t DisplayPanel::textFg() const {
-    if (m_dimmed) return FRAME_COLOR;  // 离线：统一白字
     if (m_state == nullptr) return FRAME_COLOR;
     int sum = m_state->r + m_state->g + m_state->b;
     return sum > 380 ? FRAME_TEXT : FRAME_COLOR;  // 亮底黑字，暗底白字
@@ -95,7 +93,8 @@ void DisplayPanel::setNetworkStatus(bool wifiOk, bool mqttOk) {
 void DisplayPanel::setDimmed(bool dimmed) {
     if (m_dimmed != dimmed) {
         m_dimmed = dimmed;
-        m_needFullRedraw = true;
+        // 离线不改变状态色（避免深色近黑无法辨认），仅底栏显示 OFFLINE 标记
+        renderStatusIndicators();
     }
 }
 
@@ -105,18 +104,13 @@ void DisplayPanel::renderMid(uint32_t now, bool force) {
 
     float lum = 1.0f;
     if (isWaiting()) {
-        // 青色呼吸闪烁：整块亮度正弦变化
-        lum = 0.35f + 0.65f * (0.5f + 0.5f * sinf(2.0f * PI * 1.2f * (now / 1000.0f)));
+        // 青色轻微呼吸（0.8~1.0），避免大幅起伏造成闪屏感
+        lum = 0.8f + 0.2f * (0.5f + 0.5f * sinf(2.0f * PI * 1.2f * (now / 1000.0f)));
     }
 
-    uint16_t bg = stateBg(m_dimmed ? lum * 0.2f : lum);
+    uint16_t bg = stateBg(lum);
     m_tft.fillRect(0, MID_Y, SCREEN_WIDTH, MID_H, bg);
     uint16_t fg = textFg();
-
-    // running 流水波（黄块上的黑色波线）
-    if (isRunning() && force) {
-        renderFlow(now);
-    }
 
     // 状态大字 72px（居中显示，仅状态词）
     int bigW = 72 * cnLen(m_state->cnName);
@@ -124,20 +118,30 @@ void DisplayPanel::renderMid(uint32_t now, bool force) {
                       MID_Y + (MID_H - 72) / 2, m_state->cnName, fg, bg, 72, 4);
 }
 
-// ====== running 流水波（局部刷新，避免整块重绘）======
-void DisplayPanel::renderFlow(uint32_t now) {
+// ====== running 流光亮点（透明 Sprite 层，白色亮点沿对角线游走）======
+void DisplayPanel::renderShine(uint32_t now) {
+    m_shine.fillSprite(0x0000);  // 黑色作透明色
     float t = now / 1000.0f;
-    uint16_t bg = stateBg(m_dimmed ? 0.2f : 1.0f);
-    m_tft.fillRect(10, WAVE_Y, SCREEN_WIDTH - 20, WAVE_H, bg);
+    const float speed = 0.6f;    // 每个亮点约 1.7 秒穿过一次
+    const int W = SCREEN_WIDTH;
+    const int H = MID_H;
+    RGBColor white(255, 255, 255);
 
-    for (int i = 0; i < 2; i++) {
-        float phase = i * 3.0f;
-        int cy = WAVE_Y + WAVE_H / 2 + (i == 0 ? 0 : 3);
-        for (int x = 0; x < SCREEN_WIDTH - 20; x += 3) {
-            int y = cy + (int)(sinf(x * 0.08f + t * 5.0f + phase) * 6);
-            m_tft.drawFastHLine(x + 10, y, 3, m_dimmed ? bg : WAVE_COLOR);
+    for (int i = 0; i < 4; i++) {
+        float s = fmodf(t * speed + i * 0.25f, 1.0f);
+        int x = -80 + (int)(s * (W + 160));
+        int y = (int)(s * H);
+        // 拖尾：四个渐暗小点
+        for (int k = 4; k >= 1; k--) {
+            float s2 = s - 0.02f * k;
+            if (s2 < 0) break;
+            int x2 = -80 + (int)(s2 * (W + 160));
+            int y2 = (int)(s2 * H);
+            m_shine.fillCircle(x2, y2, k, rgb565c(white, 0.25f + 0.13f * (5 - k)));
         }
+        m_shine.fillCircle(x, y, 5, rgb565c(white, 1.0f));
     }
+    m_shine.pushSprite(0, MID_Y, 0x0000);
 }
 
 // ====== 上下白色边框 ======
@@ -236,9 +240,9 @@ void DisplayPanel::update() {
 
     // 状态专属动效
     if (isRunning()) {
-        if (now - m_lastAnimMs >= 33) {   // 流水 30fps
+        if (now - m_lastAnimMs >= 33) {   // 流光 30fps
             m_lastAnimMs = now;
-            renderFlow(now);
+            renderShine(now);
         }
     } else if (isWaiting()) {
         if (now - m_lastAnimMs >= 66) {   // 呼吸 15fps
