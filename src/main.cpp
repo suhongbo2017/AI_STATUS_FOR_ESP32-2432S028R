@@ -1,14 +1,12 @@
 /**
  * AI状态看板 — ESP32-2432S028R (CYD) AI 工作流状态显示器
  *
- * 通过 2.8 寸全屏大色块 + 状态文字显示 AI 工作流的运行状态。
- * MQTT 协议与原 project pi-workflow-status-light 完全兼容（仅 client_id 不同）：
+ * MQTT 协议与原项目 pi-workflow-status-light 完全兼容（仅 client_id 不同）：
  *   ai/status       — 监听工作流状态（JSON: {"state":"running", "message":"..."}）
  *   ai/led/command  — 直接控制（"red" / "green" / "blue" / "blink:yellow" / "breath:purple"）
  *   ai/status       — 发布心跳（{"state":"heartbeat"}）
  *
- * 配置文件（SPIFFS）:
- *   /config.json — WiFi/MQTT 配置参数
+ * 状态定义与配色统一由 StatusRegistry 管理，新增状态只需在注册表加一行。
  */
 
 #include <Arduino.h>
@@ -17,11 +15,10 @@
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
 #include "Config.h"
-#include "StateMachine.h"
+#include "StatusRegistry.h"
 #include "DisplayPanel.h"
 
 // ====== 全局对象 ======
-StateMachine g_stateMachine;
 DisplayPanel g_display;
 WiFiClient g_wifiClient;
 PubSubClient g_mqttClient(g_wifiClient);
@@ -37,6 +34,7 @@ struct RuntimeConfig {
 } g_config;
 
 // ====== 状态变量 ======
+String g_stateKey = "init";
 unsigned long g_lastHeartbeatMs = 0;
 unsigned long g_lastMqttReconnectMs = 0;
 unsigned long g_lastWifiReconnectMs = 0;
@@ -46,6 +44,28 @@ bool g_initialStateLoaded = false;
 bool g_offlineMode = false;
 int g_mqttConnectFailCount = 0;
 bool g_criticalTriggered = false;
+
+// ====== 应用状态到看板 ======
+void applyState(const char* key, const char* msg) {
+    g_stateKey = key;
+    g_display.setState(key, msg ? msg : "");
+    Serial.printf("[状态] %s%s%s\n", key, msg ? " | " : "", msg ? msg : "");
+}
+
+// ====== 颜色名转 RGB（ai/led/command 兼容） ======
+static RGBColor colorNameToRGB(const String& name) {
+    if (name == "red")     return RGBColor(255, 0, 0);
+    if (name == "green")   return RGBColor(0, 255, 0);
+    if (name == "blue")    return RGBColor(0, 0, 255);
+    if (name == "yellow")  return RGBColor(255, 255, 0);
+    if (name == "cyan")    return RGBColor(0, 255, 180);
+    if (name == "magenta") return RGBColor(255, 0, 255);
+    if (name == "purple")  return RGBColor(255, 0, 255);
+    if (name == "orange")  return RGBColor(255, 165, 0);
+    if (name == "white")   return RGBColor(255, 255, 255);
+    if (name == "black")   return RGBColor(0, 0, 0);
+    return RGBColor(46, 134, 255);  // 默认蓝
+}
 
 // ====== 配置文件读写 ======
 bool loadConfig() {
@@ -119,7 +139,6 @@ void connectWiFi() {
         Serial.printf("[WiFi] IP 地址: %s\n", WiFi.localIP().toString().c_str());
         g_wifiConnected = true;
         g_offlineMode = false;
-        g_stateMachine.setBrightnessMultiplier(255);
         g_display.setNetworkStatus(true, g_mqttConnected);
     } else {
         Serial.println(" 超时失败!");
@@ -137,49 +156,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     Serial.printf("[MQTT] 收到消息 | Topic: %s | Payload: %s\n", topic, message.c_str());
 
-    // 处理 ai/led/command — 直接控制命令
+    // 处理 ai/led/command — 直接控制命令（只取颜色，看板风格不播动画）
     if (String(topic) == TOPIC_COMMAND) {
         message.trim();
 
-        String effectType = "solid";
         String colorName = message;
-
         int colonPos = message.indexOf(':');
         if (colonPos > 0) {
-            effectType = message.substring(0, colonPos);
             colorName = message.substring(colonPos + 1);
         }
 
-        RGBColor color = StateMachine::colorNameToRGB(colorName);
-        LEDEffect effect;
-
-        if (effectType == "blink") {
-            effect.type = EffectType::BLINK;
-            effect.color1 = color;
-            effect.periodMs = 500;
-        } else if (effectType == "breath") {
-            effect.type = EffectType::BREATH;
-            effect.color1 = color;
-            effect.periodMs = 2000;
-        } else if (effectType == "alternate") {
-            effect.type = EffectType::ALTERNATE;
-            effect.color1 = color;
-            effect.color2 = RGBColor::Black;
-            effect.periodMs = 500;
-        } else if (effectType == "chase") {
-            effect.type = EffectType::CHASE;
-            effect.color1 = color;
-            effect.color2 = RGBColor(40, 40, 40);
-            effect.periodMs = 3600;
-        } else {
-            effect.type = EffectType::SOLID;
-            effect.color1 = color;
-        }
-
-        effect.brightness = 255;
-        g_display.setEffect(effect);
-        g_display.setStateName("cmd");   // 看板徽章显示 CMD，颜色来自命令
-        Serial.printf("[LED] 直接控制: %s → %s\n", effectType.c_str(), colorName.c_str());
+        RGBColor c = colorNameToRGB(colorName);
+        uint16_t c565 = (uint16_t)(((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3));
+        g_display.setCommandColor(c565, "cmd");
+        Serial.printf("[LED] 直接控制: %s\n", colorName.c_str());
         return;
     }
 
@@ -199,32 +189,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             return;
         }
 
-        // 心跳消息不处理
-        if (strcmp(state, "heartbeat") == 0) {
-            return;
-        }
-
-        // 离线状态不改变显示（已在离线模式中处理）
-        if (strcmp(state, "offline") == 0) {
+        // 心跳/离线消息不改变显示
+        if (strcmp(state, "heartbeat") == 0 || strcmp(state, "offline") == 0) {
             return;
         }
 
         g_initialStateLoaded = true;
-
-        WorkflowState ws = StateMachine::stringToState(state);
-        g_stateMachine.forceSetState(ws);
-        g_display.setEffect(g_stateMachine.getCurrentEffect());
-        g_display.setStateName(StateMachine::stateToString(ws));
-
-        // 透传 message 字段到看板
-        if (doc["message"]) {
-            g_display.setMessage((const char*)doc["message"]);
-        } else {
-            g_display.setMessage("");
-        }
-
         g_criticalTriggered = false;
-        g_stateMachine.printState(Serial);
+
+        const char* msg = doc["message"] ? (const char*)doc["message"] : "";
+        applyState(state, msg);
     }
 }
 
@@ -291,7 +265,7 @@ void publishHeartbeat() {
     }
 }
 
-// ====== 进入离线模式 ======
+// ====== 离线/恢复 ======
 void enterOfflineMode() {
     if (!g_offlineMode) {
         g_offlineMode = true;
@@ -300,7 +274,6 @@ void enterOfflineMode() {
     }
 }
 
-// ====== 退出离线模式 ======
 void exitOfflineMode() {
     if (g_offlineMode) {
         g_offlineMode = false;
@@ -309,14 +282,12 @@ void exitOfflineMode() {
     }
 }
 
-// ====== 进入严重故障状态 ======
+// ====== MQTT 连续失败 → 严重故障 ======
 void enterCriticalState() {
     if (!g_criticalTriggered) {
         g_criticalTriggered = true;
-        Serial.println("[系统] 严重故障 — 红蓝交替闪烁");
-        g_stateMachine.setState(WorkflowState::CRITICAL);
-        g_display.setEffect(g_stateMachine.getCurrentEffect());
-        g_display.setStateName("critical");
+        Serial.println("[系统] 严重故障 — MQTT 连接失败");
+        applyState("critical", "MQTT 连接失败");
     }
 }
 
@@ -328,30 +299,20 @@ void setup() {
     Serial.println("  AI 状态看板 (CYD)");
     Serial.println("========================================");
 
-    // 初始化屏幕看板
     g_display.begin();
-    g_stateMachine.setState(WorkflowState::INIT);
-    g_display.setEffect(g_stateMachine.getCurrentEffect());
-    g_display.setStateName(StateMachine::stateToString(WorkflowState::INIT));
-    g_stateMachine.printState(Serial);
+    applyState("init", "系统启动中");
 
-    // 加载配置文件
     loadConfig();
-
-    // 连接 WiFi
     connectWiFi();
 
-    // 连接 MQTT
     if (g_wifiConnected) {
         connectMQTT();
     }
 
-    // 如果 MQTT 未连接，进入空闲
+    // 如果 MQTT 未连接，进入空闲等待重连
     if (!g_mqttConnected) {
         Serial.println("[MQTT] 未连接，进入空闲模式（等待重连）");
-        g_stateMachine.setState(WorkflowState::IDLE);
-        g_display.setEffect(g_stateMachine.getCurrentEffect());
-        g_display.setStateName(StateMachine::stateToString(WorkflowState::IDLE));
+        applyState("idle", "等待重连");
     }
 
     g_lastHeartbeatMs = millis();
@@ -421,14 +382,11 @@ void loop() {
     // ====== 超时降级：启动后 10 秒仍未收到状态消息 → idle ======
     if (!g_initialStateLoaded && g_wifiConnected && g_mqttConnected && (now > 10000)) {
         Serial.println("[系统] 未收到状态消息，进入空闲模式");
-        g_stateMachine.setState(WorkflowState::IDLE);
-        g_display.setEffect(g_stateMachine.getCurrentEffect());
-        g_display.setStateName(StateMachine::stateToString(WorkflowState::IDLE));
+        applyState("idle", "等待任务");
         g_initialStateLoaded = true;
     }
 
-    // ====== 更新状态机与屏幕 ======
-    g_stateMachine.update();
+    // ====== 更新看板 ======
     g_display.update();
 
     delay(10);

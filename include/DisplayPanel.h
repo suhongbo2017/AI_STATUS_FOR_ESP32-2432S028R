@@ -4,61 +4,43 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include "Config.h"
-#include "StateMachine.h"
-
-// 火柴人姿势（状态表达）
-enum class FigurePose : uint8_t {
-    STAND,  // 站立：空闲/手动
-    WALK,   // 行走：初始化/限流
-    RUN,    // 跑动：运行中
-    SIT,    // 坐姿休息：完成
-    LIE,    // 躺倒：出错/严重故障
-    WAVE    // 站立挥手：等待输入
-};
-
-// 状态 → 中文/姿势 映射项
-struct StateInfo {
-    const char* key;          // 大写内部名
-    const char* cnName;       // 中文状态名（24px 大字/卡片词）
-    const char* cnDesc;       // 中文描述
-    FigurePose pose;          // 火柴人姿势
-};
+#include "StatusRegistry.h"
 
 // 屏幕看板 UI（320x240 横屏，深色仪表盘风格）：
 //   顶栏：中文标题 + 状态色圆点 + 时钟
-//   中部：左侧状态卡片（状态色 + 火柴人动画 + 中文状态词）
+//   中部：左侧状态卡片（分类色块 + 中文状态词 + 分类小字）
 //         右侧中文状态大字 + 描述 + 消息
-//   running 时：细进度条动画
+//   running 时：细进度条动画（唯一动效）
 //   底栏：WiFi/MQTT/NTP 指示灯 + 离线提示
-// 通过 Sprite 离屏渲染避免切换闪烁。
+// 状态/颜色/文案全部来自 StatusRegistry，新增状态无需改 UI。
+// 通过 Sprite 离屏渲染 + 区域化重绘避免切换闪烁。
 // 板载 RGB LED（绿/蓝）做在线/离线指示（GPIO4 红灯与 TFT_RST 共用，不驱动）
 class DisplayPanel {
 public:
     DisplayPanel() : m_card(&m_tft), m_text(&m_tft) {}
 
     void begin();
-    void setEffect(const LEDEffect& effect);   // 驱动成颜色
-    void setStateName(const String& name);     // 内部名如 "running"
-    void setMessage(const String& message);
+    // 设置状态（key 为 MQTT 状态名，未知自动兜底 UNKNOWN 灰色）
+    void setState(const String& key, const String& message);
+    // 手动命令覆盖：只改颜色与显示名（ai/led/command 兼容）
+    void setCommandColor(uint16_t rgb565Color, const char* cmdName);
     void setNetworkStatus(bool wifiOk, bool mqttOk);
     void setDimmed(bool dimmed);
     void update();
 
 private:
-    static const StateInfo* lookupState(const String& upperName);
-    const StateInfo* currentState() const;
-
     void renderAll();
     void renderChanged();            // 状态切换：只推变化 Sprite，避免整屏闪烁
     void renderTopBar();
-    void renderCard(uint32_t now);     // 卡片 sprite（含火柴人）
-    void renderTextPanel();            // 右侧文字 sprite
+    void renderCard();               // 卡片 sprite（分类色 + 中文状态词）
+    void renderTextPanel();          // 右侧文字 sprite
     void renderProgressBar(uint32_t now, bool clearOnly);
     void renderStatusBar();
     void refreshClock();
-    void drawFigure(const StateInfo& info, uint32_t now);
     uint16_t dim(uint16_t color565) const;
     uint16_t rgb565(const RGBColor& c) const;
+    uint16_t stateColor() const;     // 当前状态色（支持命令覆盖）
+    bool isRunning() const;
 
     TFT_eSPI m_tft;
     TFT_eSprite m_card;    // 140x140 状态卡片
@@ -66,13 +48,13 @@ private:
     bool m_dimmed = false;
     bool m_wifiOk = false;
     bool m_mqttOk = false;
-    String m_stateName = "INIT";
+    const StateDef* m_state = nullptr;   // 当前状态（来自注册表）
     String m_message;
-    RGBColor m_statusColor = RGBColor::Purple;
-    uint32_t m_lastAnimMs = 0;
+    bool m_cmdOverride = false;          // 手动命令覆盖中
+    uint16_t m_cmdColor = 0;
     uint32_t m_lastClockMs = 0;
-    bool m_needFullRedraw = true;     // 全屏重绘（开机/变暗）
-    bool m_needChangedRedraw = false; // 仅状态变化区域重绘（防闪烁）
+    bool m_needFullRedraw = true;        // 全屏重绘（开机/变暗）
+    bool m_needChangedRedraw = false;    // 仅状态变化区域重绘
 };
 
 #endif // DISPLAY_PANEL_H
