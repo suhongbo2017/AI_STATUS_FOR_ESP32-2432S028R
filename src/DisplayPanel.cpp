@@ -160,7 +160,7 @@ void DisplayPanel::renderDots(uint32_t now) {
 #define CHARGE_BAR_H 40
 #define CHARGE_CELL_W 14
 #define CHARGE_CELL_GAP 4
-#define CHARGE_CELL_ON 0xFFE000  // 亮格（黄）
+#define CHARGE_CELL_ON 0x07E0  // 亮格（黄）
 #define CHARGE_CELL_OFF 0x222222 // 暗格（底）
 
 static constexpr int CHARGE_X = (SCREEN_WIDTH - CHARGE_BAR_W) / 2;
