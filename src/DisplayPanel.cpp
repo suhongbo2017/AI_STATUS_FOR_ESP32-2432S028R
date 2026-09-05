@@ -94,7 +94,7 @@ uint16_t DisplayPanel::rgb565(const RGBColor& c) const {
 
 void DisplayPanel::setEffect(const LEDEffect& effect) {
     m_statusColor = effect.color1;
-    m_needFullRedraw = true;
+    m_needChangedRedraw = true;
 }
 
 void DisplayPanel::setStateName(const String& name) {
@@ -102,13 +102,13 @@ void DisplayPanel::setStateName(const String& name) {
     upper.toUpperCase();
     if (m_stateName != upper) {
         m_stateName = upper;
-        m_needFullRedraw = true;
+        m_needChangedRedraw = true;
     }
 }
 
 void DisplayPanel::setMessage(const String& message) {
     m_message = message;
-    m_needFullRedraw = true;
+    m_needChangedRedraw = true;
 }
 
 void DisplayPanel::setNetworkStatus(bool wifiOk, bool mqttOk) {
@@ -309,7 +309,7 @@ void DisplayPanel::refreshClock() {
     m_tft.setTextDatum(TL_DATUM);
 }
 
-// ====== 全屏重绘（仅状态/消息/变暗变化时）======
+// ====== 全屏重绘（仅开机/变暗时）======
 void DisplayPanel::renderAll() {
     m_tft.fillScreen(dim(BG_COLOR));
     renderTopBar();
@@ -320,11 +320,24 @@ void DisplayPanel::renderAll() {
     m_needFullRedraw = false;
 }
 
+// ====== 状态切换：只重绘变化的区域（防闪烁）======
+void DisplayPanel::renderChanged() {
+    renderCard(millis());            // 卡片 Sprite 原子推屏
+    renderTextPanel();               // 文字 Sprite 原子推屏
+    m_tft.fillCircle(232, 13, 5, rgb565(m_statusColor));  // 顶栏状态圆点
+    renderProgressBar(millis(), m_stateName != "RUNNING");
+    m_needChangedRedraw = false;
+}
+
 void DisplayPanel::update() {
     uint32_t now = millis();
 
     if (m_needFullRedraw) {
         renderAll();
+        m_lastAnimMs = now;
+        m_needChangedRedraw = false;
+    } else if (m_needChangedRedraw) {
+        renderChanged();
         m_lastAnimMs = now;
     }
 

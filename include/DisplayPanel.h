@@ -49,6 +49,7 @@ private:
     const StateInfo* currentState() const;
 
     void renderAll();
+    void renderChanged();            // 状态切换：只推变化 Sprite，避免整屏闪烁
     void renderTopBar();
     void renderCard(uint32_t now);     // 卡片 sprite（含火柴人）
     void renderTextPanel();            // 右侧文字 sprite
@@ -70,7 +71,8 @@ private:
     RGBColor m_statusColor = RGBColor::Purple;
     uint32_t m_lastAnimMs = 0;
     uint32_t m_lastClockMs = 0;
-    bool m_needFullRedraw = true;
+    bool m_needFullRedraw = true;     // 全屏重绘（开机/变暗）
+    bool m_needChangedRedraw = false; // 仅状态变化区域重绘（防闪烁）
 };
 
 #endif // DISPLAY_PANEL_H
