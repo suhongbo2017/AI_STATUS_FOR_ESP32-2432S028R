@@ -47,6 +47,8 @@ public:
         while (*utf8 && count < maxChars) {
             uint16_t uni = decodeUTF8(utf8);
             if (uni < 0x80) {
+                // ASCII：固定 GLCD 8x8，避免继承外部 setTextFont 状态
+                tft.setTextFont(1);
                 tft.setTextColor(fg, bg);
                 tft.setTextSize(1);
                 tft.setCursor(x, y + (size - 8) / 2);
