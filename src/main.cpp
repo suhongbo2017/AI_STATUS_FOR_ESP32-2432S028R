@@ -173,14 +173,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         }
 
         // 心跳/离线消息不改变显示
-        if (strcmp(state, "heartbeat") == 0 || strcmp(state, "offline") == 0) {
+        // 注意：Pi 扩展心跳格式为 {"state":"idle","message":"keepalive"}，
+        // 需同时识别 message==keepalive，否则等待态下消息文本会反复跳变
+        const char* msg = doc["message"] ? (const char*)doc["message"] : "";
+        if (strcmp(state, "heartbeat") == 0 || strcmp(state, "offline") == 0
+            || strcmp(msg, "keepalive") == 0) {
             return;
         }
 
         g_initialStateLoaded = true;
         g_criticalTriggered = false;
 
-        const char* msg = doc["message"] ? (const char*)doc["message"] : "";
         applyState(state, msg);
     }
 }

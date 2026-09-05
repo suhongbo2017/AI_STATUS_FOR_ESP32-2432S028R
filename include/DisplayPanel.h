@@ -35,7 +35,6 @@ private:
     void renderText(uint32_t now);   // 中间文字区 sprite（含 waiting 闪烁亮度）
     void renderFlow(uint32_t now);   // running 流水带
     void renderRipple(uint32_t now); // cmd 涟漪
-    void renderProgressBar(uint32_t now, bool clearOnly);
     void renderStatusIndicators();
     void refreshClock();
     uint16_t dim(uint16_t color565) const;
