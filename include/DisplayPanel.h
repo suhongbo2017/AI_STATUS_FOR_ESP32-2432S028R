@@ -15,6 +15,8 @@
 // 板载 RGB LED（绿/蓝）做在线/离线指示（GPIO4 红灯与 TFT_RST 共用，不驱动）
 class DisplayPanel {
 public:
+    DisplayPanel() : m_mid(&m_tft) {}
+
     void begin();
     // 任何 ai/status 消息到来时调用：刷新息屏计时并唤醒
     void notifyActivity();
@@ -36,6 +38,8 @@ private:
     bool isWaiting() const;
 
     TFT_eSPI m_tft;
+    TFT_eSprite m_mid;    // 大字区离屏渲染（切换时一次推屏，消除逐字闪屏）
+    bool m_midOk = false; // sprite 分配成功（内存不足时回退直接绘制）
     bool m_dimmed = false;
     bool m_wifiOk = false;
     bool m_mqttOk = false;

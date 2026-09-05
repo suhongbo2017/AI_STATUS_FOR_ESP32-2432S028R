@@ -49,6 +49,19 @@ void DisplayPanel::begin() {
     m_tft.fillScreen(FRAME_COLOR);
     m_lastActivityMs = millis();
 
+    // 中间区背景直接填充 + 大字区用 sprite 离屏一次推入（防逐字闪屏）
+    // 大字带：高 86px（60px 大字 + 边距），内存约 56KB
+    const int bandH = 86;
+    m_midOk = m_mid.createSprite(SCREEN_WIDTH, bandH);
+    if (m_midOk) {
+        m_mid.setSwapBytes(true);
+        Serial.printf("[屏幕] 大字区 sprite 就绪 (heap free %d KB)\n",
+                      heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024);
+    } else {
+        Serial.printf("[屏幕] sprite 分配失败，回退直接绘制 (heap free %d KB)\n",
+                      heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024);
+    }
+
     pinMode(LED_GREEN_PIN, OUTPUT);
     pinMode(LED_BLUE_PIN, OUTPUT);
     ledWrite(LED_GREEN_PIN, false);
@@ -111,19 +124,30 @@ void DisplayPanel::notifyActivity() {
     }
 }
 
-// ====== 中间状态块（纯色背景 + 72px 状态大字）======
+// ====== 中间状态块（离屏整块渲染：背景+大字，一次推屏防闪）======
 void DisplayPanel::renderMid(uint32_t now, bool force) {
     if (m_state == nullptr) return;
 
     uint16_t bg = stateBg(1.0f);
-    m_tft.fillRect(0, MID_Y, SCREEN_WIDTH, MID_H, bg);
     uint16_t fg = textFg();
-
-    // 状态大字 60px 统一（居中，5 字 300px 亦不溢出）
     int len = cnLen(m_state->cnName);
     int bigW = 60 * len;
-    ChineseFont::draw(m_tft, (SCREEN_WIDTH - bigW) / 2,
-                      MID_Y + (MID_H - 60) / 2, m_state->cnName, fg, bg, 60, 6);
+
+    // 背景整块直接填充
+    m_tft.fillRect(0, MID_Y, SCREEN_WIDTH, MID_H, bg);
+
+    // 大字区：离屏渲染后一次推屏（避免逐字绘制造成的闪屏）
+    if (m_midOk) {
+        const int bandH = 86;
+        const int bandY = MID_Y + (MID_H - bandH) / 2;   // 大字带屏幕位置
+        m_mid.fillSprite(bg);
+        ChineseFont::draw(m_mid, (SCREEN_WIDTH - bigW) / 2, (bandH - 60) / 2,
+                          m_state->cnName, fg, 60, 6);
+        m_mid.pushSprite(0, bandY);
+    } else {
+        ChineseFont::draw(m_tft, (SCREEN_WIDTH - bigW) / 2,
+                          MID_Y + (MID_H - 60) / 2, m_state->cnName, fg, bg, 60, 6);
+    }
 
     // running：重置充电进度条（下一帧全量重绘）
     if (isRunning()) {

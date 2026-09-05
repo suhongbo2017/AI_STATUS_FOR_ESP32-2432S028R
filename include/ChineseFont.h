@@ -9,10 +9,9 @@
 // 与 ASCII 混排：ASCII 用 Sprite 的内置 GLCD 字体（8x8）
 class ChineseFont {
 public:
-    // 在 sprite 上绘制 UTF-8 文本；返回绘制后 x 坐标。未知字显示 □
+    // 在 sprite 上绘制 UTF-8 文本；size 16/24/60/72。未知字显示 □
     static int draw(TFT_eSprite& sp, int x, int y, const char* utf8,
-                    uint16_t color, bool big = false, int maxChars = 32) {
-        const int size = big ? 24 : 16;
+                    uint16_t color, uint8_t size = 16, int maxChars = 32) {
         int count = 0;
         while (*utf8 && count < maxChars) {
             uint16_t uni = decodeUTF8(utf8);
@@ -24,9 +23,9 @@ public:
                 sp.print((char)uni);
                 x += 8;
             } else {
-                const uint8_t* g = nullptr;
-                if (!big) g = glyph16(uni);
-                else      g = glyph24(uni);
+                const uint8_t* g = (size >= 72) ? glyph72(uni)
+                                   : (size >= 60 ? glyph60(uni)
+                                      : (size >= 24 ? glyph24(uni) : glyph16(uni)));
                 if (g) {
                     sp.drawBitmap(x, y, g, size, size, color);
                 } else {
