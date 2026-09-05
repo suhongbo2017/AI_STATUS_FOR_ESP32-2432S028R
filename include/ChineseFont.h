@@ -57,8 +57,9 @@ public:
             } else {
                 const uint8_t* g = big ? glyph24(uni) : glyph16(uni);
                 if (g) {
+                    // 第三参 false = 1bpp（true 是 8bpp 调色板，会把字模当索引产生乱码）
                     tft.setBitmapColor(fg, bg);
-                    tft.pushImage(x, y, size, size, g, true);  // 1bpp，0 位透明
+                    tft.pushImage(x, y, size, size, g, false);
                 } else {
                     tft.drawRect(x, y, size, size, fg);
                 }
