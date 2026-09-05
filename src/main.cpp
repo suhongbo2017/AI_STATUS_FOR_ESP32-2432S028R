@@ -52,21 +52,6 @@ void applyState(const char* key, const char* msg) {
     Serial.printf("[状态] %s%s%s\n", key, msg ? " | " : "", msg ? msg : "");
 }
 
-// ====== 颜色名转 RGB（ai/led/command 兼容） ======
-static RGBColor colorNameToRGB(const String& name) {
-    if (name == "red")     return RGBColor(255, 0, 0);
-    if (name == "green")   return RGBColor(0, 255, 0);
-    if (name == "blue")    return RGBColor(0, 0, 255);
-    if (name == "yellow")  return RGBColor(255, 255, 0);
-    if (name == "cyan")    return RGBColor(0, 255, 180);
-    if (name == "magenta") return RGBColor(255, 0, 255);
-    if (name == "purple")  return RGBColor(255, 0, 255);
-    if (name == "orange")  return RGBColor(255, 165, 0);
-    if (name == "white")   return RGBColor(255, 255, 255);
-    if (name == "black")   return RGBColor(0, 0, 0);
-    return RGBColor(46, 134, 255);  // 默认蓝
-}
-
 // ====== 配置文件读写 ======
 bool loadConfig() {
     if (!SPIFFS.begin(true)) {
@@ -156,7 +141,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     Serial.printf("[MQTT] 收到消息 | Topic: %s | Payload: %s\n", topic, message.c_str());
 
-    // 处理 ai/led/command — 直接控制命令（只取颜色，看板风格不播动画）
+    // 处理 ai/led/command — 直接控制命令（看板统一橙红涟漪"执行命令"态）
     if (String(topic) == TOPIC_COMMAND) {
         message.trim();
 
@@ -166,9 +151,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             colorName = message.substring(colonPos + 1);
         }
 
-        RGBColor c = colorNameToRGB(colorName);
-        uint16_t c565 = (uint16_t)(((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3));
-        g_display.setCommandColor(c565, "cmd");
+        g_display.setState("cmd", colorName);
         Serial.printf("[LED] 直接控制: %s\n", colorName.c_str());
         return;
     }

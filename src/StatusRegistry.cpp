@@ -12,6 +12,7 @@ static const StateDef STATUS_TABLE[] = {
     { "done",      "已完成",   "任务完成",   StatusClass::READY,  46, 204, 113 },  // 绿
     { "error",     "出错",     "任务出错",   StatusClass::ERROR, 255,  77,  77 },  // 红
     { "critical",  "严重故障", "请检查连接", StatusClass::ERROR, 255,  46, 136 },  // 品红
+    { "cmd",       "执行命令", "命令执行中", StatusClass::BUSY,  255,  95,  42 },  // 橙红（手动命令）
 };
 
 // 未命中时的兜底条目（灰色）
