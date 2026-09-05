@@ -1,0 +1,12 @@
+{
+    "wifi": {
+        "ssid": "JHS",
+        "password": "jhs16888"
+    },
+    "mqtt": {
+        "host": "broker.emqx.io",
+        "port": 1883,
+        "user": "",
+        "pass": ""
+    }
+}
