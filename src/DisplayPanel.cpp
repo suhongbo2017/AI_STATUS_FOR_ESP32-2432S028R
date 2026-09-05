@@ -13,10 +13,6 @@ static constexpr int MID_Y = FRAME_H;                   // 中间区上界 29
 static constexpr int MID_BOT = SCREEN_HEIGHT - FRAME_H; // 中间区下界 211
 static constexpr int MID_H = MID_BOT - MID_Y;           // 182
 
-// 中间区内容布局
-static constexpr int TITLE_Y = 82;    // 大字 24px → 82..106
-static constexpr int DESC_Y = 116;    // 描述 16px → 116..132
-static constexpr int MSG_Y = 140;     // 消息 16px → 140..156
 static constexpr int WAVE_Y = 44;     // 流水波带 → 44..66
 static constexpr int WAVE_H = 22;
 
@@ -80,10 +76,10 @@ bool DisplayPanel::isWaiting() const {
 }
 
 void DisplayPanel::setState(const String& key, const String& message) {
+    (void)message;  // 当前 UI 只显示状态大字，消息暂不展示（协议层保留解析）
     const StateDef* def = lookupState(key.c_str());
-    if (def != m_state || m_message != message) {
+    if (def != m_state) {
         m_state = def;
-        m_message = message;
         m_needChangedRedraw = true;
     }
 }
@@ -103,7 +99,7 @@ void DisplayPanel::setDimmed(bool dimmed) {
     }
 }
 
-// ====== 中间状态块（纯色背景 + 文字）；force=true 表示状态切换整块重绘 ======
+// ====== 中间状态块（纯色背景 + 72px 状态大字）；force=true 表示状态切换整块重绘 ======
 void DisplayPanel::renderMid(uint32_t now, bool force) {
     if (m_state == nullptr) return;
 
@@ -122,18 +118,10 @@ void DisplayPanel::renderMid(uint32_t now, bool force) {
         renderFlow(now);
     }
 
-    // 状态大字 24px
-    int bigW = 24 * cnLen(m_state->cnName);
-    ChineseFont::draw(m_tft, (SCREEN_WIDTH - bigW) / 2, TITLE_Y, m_state->cnName, fg, bg, true, 8);
-
-    // 描述 16px
-    int descW = 16 * cnLen(m_state->cnDesc);
-    ChineseFont::draw(m_tft, (SCREEN_WIDTH - descW) / 2, DESC_Y, m_state->cnDesc, fg, bg, false, 16);
-
-    // 消息 16px（单行截断）
-    if (m_message.length() > 0) {
-        ChineseFont::draw(m_tft, 10, MSG_Y, m_message.c_str(), fg, bg, false, 17);
-    }
+    // 状态大字 72px（居中显示，仅状态词）
+    int bigW = 72 * cnLen(m_state->cnName);
+    ChineseFont::draw(m_tft, (SCREEN_WIDTH - bigW) / 2,
+                      MID_Y + (MID_H - 72) / 2, m_state->cnName, fg, bg, 72, 4);
 }
 
 // ====== running 流水波（局部刷新，避免整块重绘）======

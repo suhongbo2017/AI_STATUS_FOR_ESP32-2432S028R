@@ -37,7 +37,6 @@ private:
     bool m_wifiOk = false;
     bool m_mqttOk = false;
     const StateDef* m_state = nullptr;
-    String m_message;
     uint32_t m_lastClockMs = 0;
     uint32_t m_lastAnimMs = 0;
     bool m_needFullRedraw = true;

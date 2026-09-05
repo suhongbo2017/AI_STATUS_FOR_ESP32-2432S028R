@@ -39,10 +39,9 @@ public:
         return x;
     }
 
-    // 直接在 TFT 上绘制（1bpp pushImage），用于标题栏等固定文本
+    // 直接在 TFT 上绘制（1bpp pushImage），size: 16 常规 / 24 大 / 72 超大状态字
     static int draw(TFT_eSPI& tft, int x, int y, const char* utf8,
-                    uint16_t fg, uint16_t bg, bool big = false, int maxChars = 32) {
-        const int size = big ? 24 : 16;
+                    uint16_t fg, uint16_t bg, uint8_t size = 16, int maxChars = 32) {
         int count = 0;
         while (*utf8 && count < maxChars) {
             uint16_t uni = decodeUTF8(utf8);
@@ -55,7 +54,8 @@ public:
                 tft.print((char)uni);
                 x += 8;
             } else {
-                const uint8_t* g = big ? glyph24(uni) : glyph16(uni);
+                const uint8_t* g = (size >= 72) ? glyph72(uni)
+                                   : (size >= 24 ? glyph24(uni) : glyph16(uni));
                 if (g) {
                     // 第三参 false = 1bpp（true 是 8bpp 调色板，会把字模当索引产生乱码）
                     tft.setBitmapColor(fg, bg);
@@ -97,6 +97,14 @@ private:
         int count = (int)(sizeof(UNI24) / sizeof(UNI24[0]));
         for (int i = 0; i < count; i++) {
             if (UNI24[i] == uni) return &FONT24[i * 72];
+        }
+        return nullptr;
+    }
+
+    static const uint8_t* glyph72(uint16_t uni) {
+        int count = (int)(sizeof(UNI72) / sizeof(UNI72[0]));
+        for (int i = 0; i < count; i++) {
+            if (UNI72[i] == uni) return &FONT72[i * 648];
         }
         return nullptr;
     }

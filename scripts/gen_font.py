@@ -68,6 +68,14 @@ font24_data = bytearray(len(uni24) * 72)
 for i, uni in enumerate(uni24):
     font24_data[i * 72 : i * 72 + 72] = render_glyph(uni, 24, font24)
 
+# ---- 72x72: 中间区状态大字（仅状态词） ----
+HUGE_WORDS = "等待运行输入完成出错未知"
+font72 = load_font(72)
+uni72 = sorted({ord(c) for c in HUGE_WORDS if ord(c) > 0x7F})
+font72_data = bytearray(len(uni72) * 72 * 9)
+for i, uni in enumerate(uni72):
+    font72_data[i * 648 : i * 648 + 648] = render_glyph(uni, 72, font72)
+
 # ---- 输出 C 头文件 ----
 def arr(name, data, per):
     lines = ["static const uint8_t %s[] PROGMEM = {" % name]
@@ -82,14 +90,14 @@ with open(OUT, "w", encoding="utf-8") as f:
 #define FONT_CN_H
 
 // 自动生成，请勿手改：scripts/gen_font.py
-// 16x16: GB2312 一级汉字 3755 字；24x24: 界面白名单 %d 字
+// 16x16: GB2312 一级汉字 3755 字；24x24: 界面白名单 %d 字；72x72: 状态大字 %d 字
 #include <stdint.h>
 #include <stddef.h>
 
 typedef struct { uint16_t uni; uint16_t idx; } UniEntry16;
 
 static const UniEntry16 UNI16[%d] = {
-""" % (len(uni24), len(entries)))
+""" % (len(uni24), len(uni72), len(entries)))
     for uni, idx in entries:
         f.write("  {0x%04X, %d},\n" % (uni, idx))
     f.write("""};
@@ -102,8 +110,15 @@ static const uint16_t UNI24[%d] = {
         f.write("  0x%04X,\n" % u)
     f.write("};\n\n" + arr("FONT24", font24_data, 24) + """
 
+static const uint16_t UNI72[%d] = {
+""" % len(uni72))
+    for u in uni72:
+        f.write("  0x%04X,\n" % u)
+    f.write("};\n\n" + arr("FONT72", font72_data, 24) + """
+
 #endif // FONT_CN_H
 """)
 
 print("font_cn.h generated:", os.path.getsize(OUT), "bytes;",
-      "uni16=%d font16=%dB uni24=%d font24=%dB" % (len(entries), len(font16_data), len(uni24), len(font24_data)))
+      "uni16=%d font16=%dB uni24=%d font24=%dB uni72=%d font72=%dB" % (
+          len(entries), len(font16_data), len(uni24), len(font24_data), len(uni72), len(font72_data)))
