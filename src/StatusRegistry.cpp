@@ -1,21 +1,25 @@
 #include "StatusRegistry.h"
 
-// 状态色：深色背景看板，采用标准纯色，保证与观感一致（经全屏纯色自检验证显示链路正常）
+// ====== 5 个核心状态（标准纯色）======
 static const StateDef STATUS_TABLE[] = {
-    { "init",      "初始化",   "系统启动中", StatusClass::BUSY,  150,   0, 255 },  // 紫
-    { "idle",      "空闲",     "等待任务",   StatusClass::READY,   0,   0, 255 },  // 蓝
-    { "running",   "运行中",   "正在处理",   StatusClass::BUSY,  255, 255,   0 },  // 黄
-    { "waiting",   "等待中",   "等待输入",   StatusClass::BUSY,    0, 255, 255 },  // 青
-    { "throttled", "限流",     "限流冷却",   StatusClass::BUSY,  255, 165,   0 },  // 橙
-    { "done",      "已完成",   "任务完成",   StatusClass::READY,   0, 255,   0 },  // 绿
-    { "error",     "出错",     "任务出错",   StatusClass::ERROR, 255,   0,   0 },  // 红
-    { "critical",  "严重故障", "请检查连接", StatusClass::ERROR, 255,   0, 128 },  // 玫红（区别于紫）
-    { "cmd",       "执行命令", "命令执行中", StatusClass::BUSY,  255,  90,  30 },  // 橙红（手动命令）
+    { "idle",    "等待", "等待任务",   0,   0, 255 },  // 蓝
+    { "running", "运行", "正在处理", 255, 255,   0 },  // 黄
+    { "waiting", "输入", "等待输入",   0, 255, 255 },  // 青
+    { "done",    "完成", "任务完成",   0, 255,   0 },  // 绿
+    { "error",   "出错", "任务出错", 255,   0,   0 },  // 红
+};
+
+// 旧状态合并到核心状态的别名表
+static const struct Alias { const char* from; const char* to; } ALIAS_TABLE[] = {
+    { "init",      "idle" },     // 初始化 → 等待
+    { "throttled", "idle" },     // 限流冷却 → 等待
+    { "cmd",       "running" },  // 执行命令 → 运行
+    { "critical",  "error" },    // 严重故障 → 出错
 };
 
 // 未命中时的兜底条目（灰色）
 static const StateDef UNKNOWN_STATE = {
-    "unknown", "未知状态", "未知状态", StatusClass::UNKNOWN, 138, 147, 160
+    "unknown", "未知", "未知状态", 120, 120, 120
 };
 
 const StateDef* lookupState(const char* key) {
@@ -23,15 +27,13 @@ const StateDef* lookupState(const char* key) {
         for (const auto& s : STATUS_TABLE) {
             if (strcmp(key, s.key) == 0) return &s;
         }
+        for (const auto& a : ALIAS_TABLE) {
+            if (strcmp(key, a.from) == 0) {
+                for (const auto& s : STATUS_TABLE) {
+                    if (strcmp(a.to, s.key) == 0) return &s;
+                }
+            }
+        }
     }
     return &UNKNOWN_STATE;
-}
-
-const char* classCnName(StatusClass cls) {
-    switch (cls) {
-        case StatusClass::READY:   return "就绪";
-        case StatusClass::BUSY:    return "进行中";
-        case StatusClass::ERROR:   return "异常";
-        default:                   return "未知";
-    }
 }

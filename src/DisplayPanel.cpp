@@ -2,27 +2,23 @@
 #include "ChineseFont.h"
 
 // 配色
-#define FRAME_COLOR  0xB8902A  // 棕黄边框
-#define FRAME_TEXT   0x000000  // 边框内文字（黑）
-#define OFF_TEXT     0xE74C3C  // 离线警示红
-#define BG_BLACK     0x000000
+#define FRAME_COLOR  0xFFFF    // 上下边框：纯白
+#define FRAME_TEXT   0x0000    // 边框内文字：黑
+#define OFF_TEXT     0xCC0000  // 离线警示（白底上的深红）
+#define WAVE_COLOR   0x0000    // 流水波：黑（黄底）
 
 // 边框：上下各 12% 屏高（240*12% ≈ 29px）
 static constexpr int FRAME_H = 29;
-static constexpr int MID_Y = FRAME_H;                  // 中间区上界 29
+static constexpr int MID_Y = FRAME_H;                   // 中间区上界 29
 static constexpr int MID_BOT = SCREEN_HEIGHT - FRAME_H; // 中间区下界 211
-static constexpr int MID_H = MID_BOT - MID_Y;          // 182
+static constexpr int MID_H = MID_BOT - MID_Y;           // 182
 
-// 中间区布局（全部严格限制在 [MID_Y, MID_BOT] 内）
-static constexpr int TEX_X = 10;                       // 文字区左
-static constexpr int TEX_W = SCREEN_WIDTH - 20;        // 300
-static constexpr int TEX_Y = 62;                       // 文字 sprite 上界
-static constexpr int TEX_H = 96;                       // 62..158
-static constexpr int FLOW_Y = MID_Y + 7;               // 36 流水带
-static constexpr int FLOW_H = 20;                      // 36..56
-static constexpr int RIP_X = 105;                      // 涟漪区（居中 110x110）
-static constexpr int RIP_Y = 30;
-static constexpr int RIP_S = 110;                      // 30..140，全部在中间区
+// 中间区内容布局
+static constexpr int TITLE_Y = 82;    // 大字 24px → 82..106
+static constexpr int DESC_Y = 116;    // 描述 16px → 116..132
+static constexpr int MSG_Y = 140;     // 消息 16px → 140..156
+static constexpr int WAVE_Y = 44;     // 流水波带 → 44..66
+static constexpr int WAVE_H = 22;
 
 // CYD 板载 RGB LED：低电平点亮
 static void ledWrite(uint8_t pin, bool on) {
@@ -39,47 +35,21 @@ static int cnLen(const char* s) {
     return n;
 }
 
+// 标准纯色 565 编码（带亮度因子）
+static uint16_t rgb565c(const RGBColor& c, float lum = 1.0f) {
+    uint16_t r = (uint16_t)(c.r * lum);
+    uint16_t g = (uint16_t)(c.g * lum);
+    uint16_t b = (uint16_t)(c.b * lum);
+    if (r > 255) r = 255;
+    if (g > 255) g = 255;
+    if (b > 255) b = 255;
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+
 void DisplayPanel::begin() {
     m_tft.init();
     m_tft.setRotation(SCREEN_ROTATION);
-    m_tft.fillScreen(BG_BLACK);
-
-#ifdef COLOR_TEST
-    // 颜色校准自检：全屏纯色 + 标注，每屏 2.5 秒。观察文字与底色是否相符。
-    Serial.println("[COLOR] 颜色校准开始，请记录哪几屏文字与颜色不符");
-    struct { const char* cn; const char* en; RGBColor c; } colors[] = {
-        { "红", "RED",     RGBColor(255, 0, 0)   },
-        { "绿", "GREEN",   RGBColor(0, 255, 0)   },
-        { "蓝", "BLUE",    RGBColor(0, 0, 255)   },
-        { "黄", "YELLOW",  RGBColor(255, 255, 0) },
-        { "青", "CYAN",    RGBColor(0, 255, 255) },
-        { "品红", "MAGENTA", RGBColor(255, 0, 255) },
-        { "橙", "ORANGE",  RGBColor(255, 165, 0) },
-        { "白", "WHITE",   RGBColor(255, 255, 255) },
-        { "黑", "BLACK",   RGBColor(0, 0, 0)     },
-    };
-    for (auto& e : colors) {
-        uint16_t bg = rgb565(e.c);
-        m_tft.fillScreen(bg);
-        uint16_t tc = (e.c.r + e.c.g + e.c.b > 380) ? TFT_BLACK : TFT_WHITE;
-        m_tft.setTextColor(tc, bg);
-        m_tft.setTextDatum(MC_DATUM);
-        m_tft.setTextFont(4);
-        m_tft.drawString(e.en, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 18);
-        ChineseFont::draw(m_tft, (SCREEN_WIDTH - 24) / 2, SCREEN_HEIGHT / 2 + 10, e.cn, tc, bg, true, 4);
-        m_tft.setTextDatum(TL_DATUM);
-        Serial.printf("[COLOR] %s / %s\n", e.en, e.cn);
-        delay(2500);
-    }
-    m_tft.fillScreen(BG_BLACK);
-#endif
-
-    m_text.createSprite(TEX_W, TEX_H);
-    m_text.setSwapBytes(true);
-    m_flow.createSprite(TEX_W, FLOW_H);
-    m_flow.setSwapBytes(true);
-    m_ripple.createSprite(RIP_S, RIP_S);
-    m_ripple.setSwapBytes(true);
+    m_tft.fillScreen(FRAME_COLOR);
 
     pinMode(LED_GREEN_PIN, OUTPUT);
     pinMode(LED_BLUE_PIN, OUTPUT);
@@ -89,27 +59,16 @@ void DisplayPanel::begin() {
     configTime(NTP_GMT_OFFSET_SEC, 0, NTP_SERVER1, NTP_SERVER2);
 }
 
-uint16_t DisplayPanel::dim(uint16_t color565) const {
-    if (!m_dimmed) return color565;
-    uint16_t r = (uint16_t)(((color565 >> 11) & 0x1F) * 0.2f);
-    uint16_t g = (uint16_t)(((color565 >> 5) & 0x3F) * 0.2f);
-    uint16_t b = (uint16_t)((color565 & 0x1F) * 0.2f);
-    return (r << 11) | (g << 5) | b;
+uint16_t DisplayPanel::stateBg(float lum) const {
+    if (m_state == nullptr) return rgb565c(RGBColor(120, 120, 120), lum);
+    return rgb565c(RGBColor(m_state->r, m_state->g, m_state->b), lum);
 }
 
-uint16_t DisplayPanel::rgb565(const RGBColor& c) const {
-    return (uint16_t)(((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3));
-}
-
-uint16_t DisplayPanel::rgb565l(const RGBColor& c, float lum) const {
-    float g = lum * (m_dimmed ? 0.2f : 1.0f);
-    uint16_t r = (uint16_t)(c.r * g);
-    uint16_t gg = (uint16_t)(c.g * g);
-    uint16_t b = (uint16_t)(c.b * g);
-    if (r > 255) r = 255;
-    if (gg > 255) gg = 255;
-    if (b > 255) b = 255;
-    return rgb565(RGBColor((uint8_t)r, (uint8_t)gg, (uint8_t)b));
+uint16_t DisplayPanel::textFg() const {
+    if (m_dimmed) return FRAME_COLOR;  // 离线：统一白字
+    if (m_state == nullptr) return FRAME_COLOR;
+    int sum = m_state->r + m_state->g + m_state->b;
+    return sum > 380 ? FRAME_TEXT : FRAME_COLOR;  // 亮底黑字，暗底白字
 }
 
 bool DisplayPanel::isRunning() const {
@@ -118,10 +77,6 @@ bool DisplayPanel::isRunning() const {
 
 bool DisplayPanel::isWaiting() const {
     return m_state != nullptr && strcmp(m_state->key, "waiting") == 0;
-}
-
-bool DisplayPanel::isCmd() const {
-    return m_state != nullptr && strcmp(m_state->key, "cmd") == 0;
 }
 
 void DisplayPanel::setState(const String& key, const String& message) {
@@ -148,78 +103,60 @@ void DisplayPanel::setDimmed(bool dimmed) {
     }
 }
 
-// ====== 中间文字区（大字/描述/消息，waiting 呼吸闪烁）======
-void DisplayPanel::renderText(uint32_t now) {
+// ====== 中间状态块（纯色背景 + 文字）；force=true 表示状态切换整块重绘 ======
+void DisplayPanel::renderMid(uint32_t now, bool force) {
     if (m_state == nullptr) return;
+
     float lum = 1.0f;
     if (isWaiting()) {
+        // 青色呼吸闪烁：整块亮度正弦变化
         lum = 0.35f + 0.65f * (0.5f + 0.5f * sinf(2.0f * PI * 1.2f * (now / 1000.0f)));
     }
 
-    RGBColor col(m_state->r, m_state->g, m_state->b);
-    m_text.fillSprite(BG_BLACK);
+    uint16_t bg = stateBg(m_dimmed ? lum * 0.2f : lum);
+    m_tft.fillRect(0, MID_Y, SCREEN_WIDTH, MID_H, bg);
+    uint16_t fg = textFg();
 
-    // 状态大字 24px（状态色）—— 相对 sprite: y 8..32 → 全局 70..94
-    int bigW = 24 * cnLen(m_state->cnName);
-    ChineseFont::draw(m_text, (TEX_W - bigW) / 2, 8, m_state->cnName, rgb565l(col, lum), true, 8);
-
-    // 描述 16px（灰白）—— 相对 y 44..60 → 全局 106..122
-    int descW = 16 * cnLen(m_state->cnDesc);
-    ChineseFont::draw(m_text, (TEX_W - descW) / 2, 44, m_state->cnDesc, dim(0x8A93A0), false, 16);
-
-    // 消息 16px（白色，单行截断）—— 相对 y 66..82 → 全局 128..144
-    if (m_message.length() > 0) {
-        ChineseFont::draw(m_text, 8, 66, m_message.c_str(), dim(0xC8D0DC), false, 17);
+    // running 流水波（黄块上的黑色波线）
+    if (isRunning() && force) {
+        renderFlow(now);
     }
 
-    m_text.pushSprite(TEX_X, TEX_Y);
+    // 状态大字 24px
+    int bigW = 24 * cnLen(m_state->cnName);
+    ChineseFont::draw(m_tft, (SCREEN_WIDTH - bigW) / 2, TITLE_Y, m_state->cnName, fg, bg, true, 8);
+
+    // 描述 16px
+    int descW = 16 * cnLen(m_state->cnDesc);
+    ChineseFont::draw(m_tft, (SCREEN_WIDTH - descW) / 2, DESC_Y, m_state->cnDesc, fg, bg, false, 16);
+
+    // 消息 16px（单行截断）
+    if (m_message.length() > 0) {
+        ChineseFont::draw(m_tft, 10, MSG_Y, m_message.c_str(), fg, bg, false, 17);
+    }
 }
 
-// ====== running 顶部流水动画（细带，限制在中间区内）======
+// ====== running 流水波（局部刷新，避免整块重绘）======
 void DisplayPanel::renderFlow(uint32_t now) {
-    m_flow.fillSprite(BG_BLACK);
     float t = now / 1000.0f;
-    const int w = TEX_W;
-    const int mid = FLOW_H / 2;  // 10
+    uint16_t bg = stateBg(m_dimmed ? 0.2f : 1.0f);
+    m_tft.fillRect(10, WAVE_Y, SCREEN_WIDTH - 20, WAVE_H, bg);
 
-    // 两条错相正弦波，随时间流动
     for (int i = 0; i < 2; i++) {
         float phase = i * 3.0f;
-        uint8_t lum = (uint8_t)(210 - i * 90);
-        RGBColor c(255, 200, 53);
-        int cy = mid + (i == 0 ? 0 : 3);
-        for (int x = 0; x < w; x += 2) {
-            float y = cy + sinf(x * 0.07f + t * 5.0f + phase) * 5;
-            m_flow.drawFastHLine(x, (int)y, 3, rgb565l(c, lum / 255.0f));
+        int cy = WAVE_Y + WAVE_H / 2 + (i == 0 ? 0 : 3);
+        for (int x = 0; x < SCREEN_WIDTH - 20; x += 3) {
+            int y = cy + (int)(sinf(x * 0.08f + t * 5.0f + phase) * 6);
+            m_tft.drawFastHLine(x + 10, y, 3, m_dimmed ? bg : WAVE_COLOR);
         }
     }
-    m_flow.pushSprite(TEX_X, FLOW_Y);
 }
 
-// ====== cmd 涟漪（橙红圆环环绕大字扩散，透明底，不超出中间区）======
-void DisplayPanel::renderRipple(uint32_t now) {
-    m_ripple.fillSprite(BG_BLACK);
-    float t = now / 1000.0f;
-    RGBColor c(255, 95, 42);
-    const int cx = RIP_S / 2, cy = RIP_S / 2;  // 55,55 → 屏幕中心 (160, 85)
-
-    // 三个错开相位的扩散环，半径 8..42（全部落在 RIP 区内）
-    for (int i = 0; i < 3; i++) {
-        float ph = fmodf(t * 1.6f + i * 0.33f, 1.0f);
-        int r = 8 + (int)(ph * 34);
-        float lum = 0.9f * (1.0f - ph);
-        m_ripple.drawCircle(cx, cy, r, rgb565l(c, lum));
-        if (r > 3) m_ripple.drawCircle(cx, cy, r - 3, rgb565l(c, lum * 0.5f));
-    }
-    m_ripple.pushSprite(RIP_X, RIP_Y, BG_BLACK);  // 黑色透明
-}
-
-// ====== 上下棕黄边框：日期/时间 + WiFi/MQTT ======
+// ====== 上下白色边框 ======
 void DisplayPanel::renderFrame() {
-    // 上边框
-    m_tft.fillRect(0, 0, SCREEN_WIDTH, FRAME_H, dim(FRAME_COLOR));
+    m_tft.fillRect(0, 0, SCREEN_WIDTH, FRAME_H, FRAME_COLOR);
     m_tft.setTextFont(2);
-    m_tft.setTextColor(dim(FRAME_TEXT), dim(FRAME_COLOR));
+    m_tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
     m_tft.setTextDatum(TL_DATUM);
     m_tft.setCursor(10, 6);
     time_t now = time(nullptr);
@@ -235,34 +172,33 @@ void DisplayPanel::renderFrame() {
     }
     refreshClock();
 
-    // 下边框
     renderStatusIndicators();
 }
 
 void DisplayPanel::renderStatusIndicators() {
-    m_tft.fillRect(0, MID_BOT, SCREEN_WIDTH, FRAME_H, dim(FRAME_COLOR));
+    m_tft.fillRect(0, MID_BOT, SCREEN_WIDTH, FRAME_H, FRAME_COLOR);
     m_tft.setTextFont(2);
     m_tft.setTextDatum(TL_DATUM);
-    m_tft.setTextColor(dim(FRAME_TEXT), dim(FRAME_COLOR));
+    m_tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
 
-    int x = 10;
+    int x = 12;
     m_tft.setCursor(x, SCREEN_HEIGHT - 22);
     m_tft.print("WiFi");
-    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, m_wifiOk ? TFT_GREEN : OFF_TEXT);
-    x += 52;
+    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, m_wifiOk ? TFT_GREEN : TFT_RED);
+    x += 54;
 
     m_tft.setCursor(x, SCREEN_HEIGHT - 22);
     m_tft.print("MQTT");
-    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, m_mqttOk ? TFT_GREEN : OFF_TEXT);
+    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, m_mqttOk ? TFT_GREEN : TFT_RED);
     x += 62;
 
     m_tft.setCursor(x, SCREEN_HEIGHT - 22);
     m_tft.print("NTP");
     bool ntpOk = time(nullptr) > 1600000000;
-    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, ntpOk ? TFT_GREEN : OFF_TEXT);
+    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, ntpOk ? TFT_GREEN : TFT_RED);
 
     if (m_dimmed) {
-        m_tft.setTextColor(dim(OFF_TEXT), dim(FRAME_COLOR));
+        m_tft.setTextColor(OFF_TEXT, FRAME_COLOR);
         m_tft.setTextDatum(TR_DATUM);
         m_tft.drawString("OFFLINE", SCREEN_WIDTH - 8, SCREEN_HEIGHT - 21);
         m_tft.setTextDatum(TL_DATUM);
@@ -271,10 +207,10 @@ void DisplayPanel::renderStatusIndicators() {
 
 void DisplayPanel::refreshClock() {
     // 只刷新上边框右侧时间区域
-    m_tft.fillRect(150, 2, SCREEN_WIDTH - 154, FRAME_H - 4, dim(FRAME_COLOR));
+    m_tft.fillRect(150, 2, SCREEN_WIDTH - 154, FRAME_H - 4, FRAME_COLOR);
     m_tft.setTextFont(4);
     m_tft.setTextDatum(TR_DATUM);
-    m_tft.setTextColor(dim(FRAME_TEXT), dim(FRAME_COLOR));
+    m_tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
     char buf[16];
     time_t now = time(nullptr);
     if (now > 1600000000) {
@@ -288,32 +224,19 @@ void DisplayPanel::refreshClock() {
     m_tft.setTextDatum(TL_DATUM);
 }
 
-// ====== 全屏重绘（开机/变暗）======
-void DisplayPanel::renderAll() {
-    m_tft.fillScreen(BG_BLACK);
-    renderFrame();
-    renderText(millis());
-    m_needFullRedraw = false;
-}
-
-// ====== 状态切换：只重绘变化区域（防闪烁）======
-void DisplayPanel::renderChanged() {
-    // 清掉旧动画残留（流水/涟漪区域）
-    m_tft.fillRect(TEX_X, FLOW_Y, TEX_W, FLOW_H, BG_BLACK);
-    m_tft.fillRect(RIP_X, RIP_Y, RIP_S, RIP_S, BG_BLACK);
-    renderText(millis());
-    m_needChangedRedraw = false;
-}
-
 void DisplayPanel::update() {
     uint32_t now = millis();
 
     if (m_needFullRedraw) {
-        renderAll();
+        m_tft.fillScreen(FRAME_COLOR);
+        renderFrame();
+        renderMid(now, true);
+        m_needFullRedraw = false;
         m_needChangedRedraw = false;
         m_lastAnimMs = now;
     } else if (m_needChangedRedraw) {
-        renderChanged();
+        renderMid(now, true);
+        m_needChangedRedraw = false;
         m_lastAnimMs = now;
     }
 
@@ -323,17 +246,16 @@ void DisplayPanel::update() {
         refreshClock();
     }
 
-    // 状态专属动效（~30fps）
-    if (isRunning() || isCmd()) {
-        if (now - m_lastAnimMs >= 33) {
+    // 状态专属动效
+    if (isRunning()) {
+        if (now - m_lastAnimMs >= 33) {   // 流水 30fps
             m_lastAnimMs = now;
-            if (isRunning()) renderFlow(now);
-            else renderRipple(now);
+            renderFlow(now);
         }
     } else if (isWaiting()) {
-        if (now - m_lastAnimMs >= 50) {
+        if (now - m_lastAnimMs >= 66) {   // 呼吸 15fps
             m_lastAnimMs = now;
-            renderText(now);
+            renderMid(now, false);
         }
     }
 
