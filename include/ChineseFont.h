@@ -55,7 +55,8 @@ public:
                 x += 8;
             } else {
                 const uint8_t* g = (size >= 72) ? glyph72(uni)
-                                   : (size >= 24 ? glyph24(uni) : glyph16(uni));
+                                   : (size >= 60 ? glyph60(uni)
+                                      : (size >= 24 ? glyph24(uni) : glyph16(uni)));
                 if (g) {
                     // 第三参 false = 1bpp（true 是 8bpp 调色板，会把字模当索引产生乱码）
                     tft.setBitmapColor(fg, bg);
@@ -105,6 +106,14 @@ private:
         int count = (int)(sizeof(UNI72) / sizeof(UNI72[0]));
         for (int i = 0; i < count; i++) {
             if (UNI72[i] == uni) return &FONT72[i * 648];
+        }
+        return nullptr;
+    }
+
+    static const uint8_t* glyph60(uint16_t uni) {
+        int count = (int)(sizeof(UNI60) / sizeof(UNI60[0]));
+        for (int i = 0; i < count; i++) {
+            if (UNI60[i] == uni) return &FONT60[i * 480];
         }
         return nullptr;
     }

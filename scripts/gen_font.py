@@ -29,13 +29,17 @@ def render_glyph(uni, size, font):
     x = (size - w) // 2 - bb[0]
     y = (size - h) // 2 - bb[1]
     d.text((x, y), chr(uni), font=font, fill=255)
+    # 每行按 (size+7)//8 字节对齐（与固件 pushImage 1bpp 的行宽一致），
+    # 非 8 倍数尺寸（如 60px）多余位补 0，避免行间错位
+    bytes_per_row = (size + 7) // 8
     out = bytearray()
     for ry in range(size):
-        for col in range(size // 8):
+        for col in range(bytes_per_row):
             b = 0
             for k in range(8):
                 rx = col * 8 + k
-                b = (b << 1) | (1 if img.getpixel((rx, ry)) >= 128 else 0)
+                if rx < size and img.getpixel((rx, ry)) >= 128:
+                    b |= 1 << (7 - k)
             out.append(b)
     return bytes(out)
 
@@ -76,6 +80,13 @@ font72_data = bytearray(len(uni72) * 72 * 9)
 for i, uni in enumerate(uni72):
     font72_data[i * 648 : i * 648 + 648] = render_glyph(uni, 72, font72)
 
+# ---- 60x60: 长状态词缩小型号（5 字时 72px 超宽） ----
+font60 = load_font(60)
+uni60 = uni72  # 同一白名单
+font60_data = bytearray(len(uni60) * 60 * 8)  # 每行 8 字节对齐（60/8 向上取整）
+for i, uni in enumerate(uni60):
+    font60_data[i * 480 : i * 480 + 480] = render_glyph(uni, 60, font60)
+
 # ---- 输出 C 头文件 ----
 def arr(name, data, per):
     lines = ["static const uint8_t %s[] PROGMEM = {" % name]
@@ -90,7 +101,7 @@ with open(OUT, "w", encoding="utf-8") as f:
 #define FONT_CN_H
 
 // 自动生成，请勿手改：scripts/gen_font.py
-// 16x16: GB2312 一级汉字 3755 字；24x24: 界面白名单 %d 字；72x72: 状态大字 %d 字
+// 16x16: GB2312 一级汉字 3755 字；24x24: 界面白名单 %d 字；72x72/60x60: 状态大字 %d 字
 #include <stdint.h>
 #include <stddef.h>
 
@@ -116,9 +127,16 @@ static const uint16_t UNI72[%d] = {
         f.write("  0x%04X,\n" % u)
     f.write("};\n\n" + arr("FONT72", font72_data, 24) + """
 
+static const uint16_t UNI60[%d] = {
+""" % len(uni60))
+    for u in uni60:
+        f.write("  0x%04X,\n" % u)
+    f.write("};\n\n" + arr("FONT60", font60_data, 24) + """
+
 #endif // FONT_CN_H
 """)
 
 print("font_cn.h generated:", os.path.getsize(OUT), "bytes;",
-      "uni16=%d font16=%dB uni24=%d font24=%dB uni72=%d font72=%dB" % (
-          len(entries), len(font16_data), len(uni24), len(font24_data), len(uni72), len(font72_data)))
+      "uni16=%d font16=%dB uni24=%d font24=%dB uni72=%d font72=%dB uni60=%d font60=%dB" % (
+          len(entries), len(font16_data), len(uni24), len(font24_data),
+          len(uni72), len(font72_data), len(uni60), len(font60_data)))

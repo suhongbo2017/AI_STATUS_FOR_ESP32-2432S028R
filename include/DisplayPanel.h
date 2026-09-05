@@ -15,9 +15,9 @@
 // 板载 RGB LED（绿/蓝）做在线/离线指示（GPIO4 红灯与 TFT_RST 共用，不驱动）
 class DisplayPanel {
 public:
-    DisplayPanel() : m_shine(&m_tft) {}
-
     void begin();
+    // 任何 ai/status 消息到来时调用：刷新息屏计时并唤醒
+    void notifyActivity();
     void setState(const String& key, const String& message);
     void setNetworkStatus(bool wifiOk, bool mqttOk);
     void setDimmed(bool dimmed);
@@ -25,7 +25,8 @@ public:
 
 private:
     void renderMid(uint32_t now, bool force);  // 中间状态块（背景+文字）
-    void renderShine(uint32_t now);            // running 流光亮点（透明 Sprite）
+    void renderCharge(uint32_t now);           // running 充电式进度条
+    void renderDots(uint32_t now);             // waiting 打字三点动画
     void renderFrame();                        // 上下白色边框
     void renderStatusIndicators();
     void refreshClock();
@@ -35,7 +36,6 @@ private:
     bool isWaiting() const;
 
     TFT_eSPI m_tft;
-    TFT_eSprite m_shine;   // running 流光亮点动画层（透明黑底）
     bool m_dimmed = false;
     bool m_wifiOk = false;
     bool m_mqttOk = false;
@@ -44,6 +44,10 @@ private:
     uint32_t m_lastAnimMs = 0;
     bool m_needFullRedraw = true;
     bool m_needChangedRedraw = false;
+    int m_lastCells = -1;      // 充电格状进度条：已亮格数（增量绘制防闪）
+    bool m_chargeReset = true; // 需要重绘全部格底
+    uint32_t m_lastActivityMs = 0;  // 最后活动时间（息屏计时）
+    bool m_screenOff = false;       // 息屏中
 };
 
 #endif // DISPLAY_PANEL_H

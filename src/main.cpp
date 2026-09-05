@@ -158,6 +158,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     // 处理 ai/status — 工作流状态
     if (String(topic) == TOPIC_STATUS) {
+        // 任何状态消息都算活动：刷新息屏计时并唤醒
+        g_display.notifyActivity();
+
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, message);
 

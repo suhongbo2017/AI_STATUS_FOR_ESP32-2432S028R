@@ -12,6 +12,11 @@ static constexpr int MID_Y = FRAME_H;                   // 中间区上界 29
 static constexpr int MID_BOT = SCREEN_HEIGHT - FRAME_H; // 中间区下界 211
 static constexpr int MID_H = MID_BOT - MID_Y;           // 182
 
+// 自动息屏：超过该时长无任何 ai/status 消息则关背光（可被 build_flags 覆盖，测试用短值）
+#ifndef SCREEN_TIMEOUT_MS
+#define SCREEN_TIMEOUT_MS (10UL * 60 * 1000)
+#endif
+
 // CYD 板载 RGB LED：低电平点亮
 static void ledWrite(uint8_t pin, bool on) {
     digitalWrite(pin, on ? LOW : HIGH);
@@ -42,9 +47,7 @@ void DisplayPanel::begin() {
     m_tft.init();
     m_tft.setRotation(SCREEN_ROTATION);
     m_tft.fillScreen(FRAME_COLOR);
-
-    m_shine.createSprite(SCREEN_WIDTH, MID_H);  // 流光亮点层（覆盖中间区）
-    m_shine.setSwapBytes(true);
+    m_lastActivityMs = millis();
 
     pinMode(LED_GREEN_PIN, OUTPUT);
     pinMode(LED_BLUE_PIN, OUTPUT);
@@ -98,50 +101,93 @@ void DisplayPanel::setDimmed(bool dimmed) {
     }
 }
 
-// ====== 中间状态块（纯色背景 + 72px 状态大字）；force=true 表示状态切换整块重绘 ======
+void DisplayPanel::notifyActivity() {
+    m_lastActivityMs = millis();
+    if (m_screenOff) {
+        // 唤醒：开背光 + 全量重绘恢复画面
+        m_screenOff = false;
+        digitalWrite(TFT_BL, HIGH);
+        m_needFullRedraw = true;
+    }
+}
+
+// ====== 中间状态块（纯色背景 + 72px 状态大字）======
 void DisplayPanel::renderMid(uint32_t now, bool force) {
     if (m_state == nullptr) return;
 
-    float lum = 1.0f;
-    if (isWaiting()) {
-        // 青色轻微呼吸（0.8~1.0），避免大幅起伏造成闪屏感
-        lum = 0.8f + 0.2f * (0.5f + 0.5f * sinf(2.0f * PI * 1.2f * (now / 1000.0f)));
-    }
-
-    uint16_t bg = stateBg(lum);
+    uint16_t bg = stateBg(1.0f);
     m_tft.fillRect(0, MID_Y, SCREEN_WIDTH, MID_H, bg);
     uint16_t fg = textFg();
 
-    // 状态大字 72px（居中显示，仅状态词）
-    int bigW = 72 * cnLen(m_state->cnName);
+    // 状态大字 60px 统一（居中，5 字 300px 亦不溢出）
+    int len = cnLen(m_state->cnName);
+    int bigW = 60 * len;
     ChineseFont::draw(m_tft, (SCREEN_WIDTH - bigW) / 2,
-                      MID_Y + (MID_H - 72) / 2, m_state->cnName, fg, bg, 72, 4);
+                      MID_Y + (MID_H - 60) / 2, m_state->cnName, fg, bg, 60, 6);
+
+    // running：重置充电进度条（下一帧全量重绘）
+    if (isRunning()) {
+        m_chargeReset = true;
+    }
+
+    // waiting：文字下方打字三点动画
+    if (isWaiting()) {
+        renderDots(now);
+    }
 }
 
-// ====== running 流光亮点（透明 Sprite 层，白色亮点沿对角线游走）======
-void DisplayPanel::renderShine(uint32_t now) {
-    m_shine.fillSprite(0x0000);  // 黑色作透明色
-    float t = now / 1000.0f;
-    const float speed = 0.6f;    // 每个亮点约 1.7 秒穿过一次
-    const int W = SCREEN_WIDTH;
-    const int H = MID_H;
-    RGBColor white(255, 255, 255);
+// ====== waiting 打字三点动画（青底黑点依次亮起，经典等待输入语义）======
+void DisplayPanel::renderDots(uint32_t now) {
+    const int dotW = 56;                                    // 三点总宽
+    const int dotY = MID_Y + MID_H - 46;                    // 大字下方
+    const int dx = 20;
+    uint16_t bg = stateBg(1.0f);
 
-    for (int i = 0; i < 4; i++) {
-        float s = fmodf(t * speed + i * 0.25f, 1.0f);
-        int x = -80 + (int)(s * (W + 160));
-        int y = (int)(s * H);
-        // 拖尾：四个渐暗小点
-        for (int k = 4; k >= 1; k--) {
-            float s2 = s - 0.02f * k;
-            if (s2 < 0) break;
-            int x2 = -80 + (int)(s2 * (W + 160));
-            int y2 = (int)(s2 * H);
-            m_shine.fillCircle(x2, y2, k, rgb565c(white, 0.25f + 0.13f * (5 - k)));
+    m_tft.fillRect((SCREEN_WIDTH - dotW) / 2 - 4, dotY - 6, dotW + 8, 12, bg);
+    int phase = (now / 400) % 4;   // 0:000 1:100 2:110 3:111
+    for (int i = 0; i < 3; i++) {
+        if (i < phase) {
+            m_tft.fillCircle((SCREEN_WIDTH - dotW) / 2 + 9 + i * dx, dotY, 5, FRAME_TEXT);
         }
-        m_shine.fillCircle(x, y, 5, rgb565c(white, 1.0f));
     }
-    m_shine.pushSprite(0, MID_Y, 0x0000);
+}
+
+// ====== running 充电式格状进度条（粗 40px，黑底 + 分段黄格依次点亮）======
+// 增量绘制：格子数量变化时才重绘，避免整条刷新闪烁
+#define CHARGE_CELLS 14
+#define CHARGE_CYCLE_MS 3000
+#define CHARGE_BAR_W 260
+#define CHARGE_BAR_H 40
+#define CHARGE_CELL_W 14
+#define CHARGE_CELL_GAP 4
+#define CHARGE_CELL_ON 0xFFE000  // 亮格（黄）
+#define CHARGE_CELL_OFF 0x222222 // 暗格（底）
+
+static constexpr int CHARGE_X = (SCREEN_WIDTH - CHARGE_BAR_W) / 2;
+static constexpr int CHARGE_Y = MID_Y + MID_H - 46;  // 163..203，在大字下方
+
+void DisplayPanel::renderCharge(uint32_t now) {
+    int cur = (int)((now % CHARGE_CYCLE_MS) * (long)CHARGE_CELLS / CHARGE_CYCLE_MS);
+    if (cur > CHARGE_CELLS) cur = CHARGE_CELLS;
+
+    if (m_chargeReset || cur < m_lastCells) {
+        // 全量重绘：外框 + 全部暗格
+        m_tft.fillRoundRect(CHARGE_X, CHARGE_Y, CHARGE_BAR_W, CHARGE_BAR_H, 10, TFT_BLACK);
+        for (int i = 0; i < CHARGE_CELLS; i++) {
+            int x = CHARGE_X + 6 + i * (CHARGE_CELL_W + CHARGE_CELL_GAP);
+            m_tft.fillRoundRect(x, CHARGE_Y + 6, CHARGE_CELL_W, CHARGE_BAR_H - 12, 4, CHARGE_CELL_OFF);
+        }
+        m_lastCells = 0;
+        m_chargeReset = false;
+        if (cur == 0) return;
+    }
+
+    // 仅点亮新增的格子
+    while (m_lastCells < cur) {
+        int x = CHARGE_X + 6 + m_lastCells * (CHARGE_CELL_W + CHARGE_CELL_GAP);
+        m_tft.fillRoundRect(x, CHARGE_Y + 6, CHARGE_CELL_W, CHARGE_BAR_H - 12, 4, CHARGE_CELL_ON);
+        m_lastCells++;
+    }
 }
 
 // ====== 上下白色边框 ======
@@ -169,30 +215,36 @@ void DisplayPanel::renderFrame() {
 
 void DisplayPanel::renderStatusIndicators() {
     m_tft.fillRect(0, MID_BOT, SCREEN_WIDTH, FRAME_H, FRAME_COLOR);
+    const int yText = MID_BOT + (FRAME_H - 16) / 2;  // Font2 16px 文字垂直居中
+    const int yDot = MID_BOT + FRAME_H / 2;          // 圆点垂直居中
     m_tft.setTextFont(2);
     m_tft.setTextDatum(TL_DATUM);
     m_tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
 
+    // 文字（宽 = 字符数*8px）→ 间隙 8px → 圆点 r4 → 组间距
     int x = 12;
-    m_tft.setCursor(x, SCREEN_HEIGHT - 22);
+    m_tft.setCursor(x, yText);
     m_tft.print("WiFi");
-    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, m_wifiOk ? TFT_GREEN : TFT_RED);
-    x += 54;
+    x += 4 * 8 + 8;
+    m_tft.fillCircle(x, yDot, 4, m_wifiOk ? TFT_GREEN : TFT_RED);
+    x += 4 + 12;
 
-    m_tft.setCursor(x, SCREEN_HEIGHT - 22);
+    m_tft.setCursor(x, yText);
     m_tft.print("MQTT");
-    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, m_mqttOk ? TFT_GREEN : TFT_RED);
-    x += 62;
+    x += 5 * 8 + 8;
+    m_tft.fillCircle(x, yDot, 4, m_mqttOk ? TFT_GREEN : TFT_RED);
+    x += 4 + 12;
 
-    m_tft.setCursor(x, SCREEN_HEIGHT - 22);
+    m_tft.setCursor(x, yText);
     m_tft.print("NTP");
+    x += 3 * 8 + 8;
     bool ntpOk = time(nullptr) > 1600000000;
-    m_tft.fillCircle(x + 9, SCREEN_HEIGHT - 15, 3, ntpOk ? TFT_GREEN : TFT_RED);
+    m_tft.fillCircle(x, yDot, 4, ntpOk ? TFT_GREEN : TFT_RED);
 
     if (m_dimmed) {
         m_tft.setTextColor(OFF_TEXT, FRAME_COLOR);
         m_tft.setTextDatum(TR_DATUM);
-        m_tft.drawString("OFFLINE", SCREEN_WIDTH - 8, SCREEN_HEIGHT - 21);
+        m_tft.drawString("OFFLINE", SCREEN_WIDTH - 8, yText - 1);
         m_tft.setTextDatum(TL_DATUM);
     }
 }
@@ -219,6 +271,16 @@ void DisplayPanel::refreshClock() {
 void DisplayPanel::update() {
     uint32_t now = millis();
 
+    // 自动息屏：超时无活动 → 关背光、灭 LED；后续帧跳过渲染直到被唤醒
+    if (!m_screenOff && now - m_lastActivityMs >= SCREEN_TIMEOUT_MS) {
+        m_screenOff = true;
+        digitalWrite(TFT_BL, LOW);
+        ledWrite(LED_BLUE_PIN, false);
+        ledWrite(LED_GREEN_PIN, false);
+        Serial.println("[屏幕] 无活动，已息屏");
+    }
+    if (m_screenOff) return;
+
     if (m_needFullRedraw) {
         m_tft.fillScreen(FRAME_COLOR);
         renderFrame();
@@ -240,14 +302,14 @@ void DisplayPanel::update() {
 
     // 状态专属动效
     if (isRunning()) {
-        if (now - m_lastAnimMs >= 33) {   // 流光 30fps
+        if (now - m_lastAnimMs >= 33) {   // 充电进度 30fps
             m_lastAnimMs = now;
-            renderShine(now);
+            renderCharge(now);
         }
     } else if (isWaiting()) {
-        if (now - m_lastAnimMs >= 66) {   // 呼吸 15fps
+        if (now - m_lastAnimMs >= 400) {  // 打字三点：2.5 次/秒
             m_lastAnimMs = now;
-            renderMid(now, false);
+            renderDots(now);
         }
     }
 
