@@ -13,24 +13,28 @@
 | 板载 LED | 绿(16) / 蓝(17)，共阳极 |
 | 供电 | USB Type-C 5V |
 
-### 首次烧录
+### 首次烧录（推荐：一键部署工具）
 
 ```bash
-# 1. 安装 PlatformIO CLI: https://platformio.org/install
-
-# 2. 克隆仓库 + 进入目录
+# 1. 克隆仓库 + 进入目录
 git clone https://github.com/suhongbo2017/AI_STATUS_FOR_ESP32-2432S028R.git
 cd AI_STATUS_FOR_ESP32-2432S028R
 
-# 3. 上传固件（替换 COM5 为你的串口号）
-pio run -t upload --upload-port COM5
+# 2. 安装 Python 依赖 + 检查环境
+python deploy-tool/deploy_tool.py install
 
-# 4. （可选）烧录 SPIFFS 数据分区 —— 必须做！否则 config.json 不存在会导致 NTP/MQTT 失败
-pio run -t uploadfs
-
-# 5. 查看串口日志
-pio device monitor -p COM5 -b 115200
+# 3. 一键完成所有操作（替换 COM5 为你的串口号）
+python deploy-tool/deploy_tool.py all -p COM5
 ```
+
+**手动模式（逐个命令）：**
+```bash
+python deploy-tool/deploy_tool.py install       # 安装 paho-mqtt + 检查 pio-cli
+python deploy-tool/deploy_tool.py flash -p COM5 # 编译固件 + 上传 ESP32 + 上传 SPIFFS
+python deploy-tool/deploy_tool.py monitor -p COM5 # 打开串口监视器
+```
+
+详见 `deploy-tool/README.md`。
 
 首次启动期望看到的日志：
 
@@ -49,15 +53,22 @@ pio device monitor -p COM5 -b 115200
 
 ---
 
-## 编译与上传
+## 部署工具（推荐）
+
+使用 `deploy-tool/deploy_tool.py` 统一管理所有操作：
 
 | 命令 | 说明 |
 |------|------|
-| `pio run` | 编译固件 |
-| `pio run -t upload` | 编译 + 上传到 ESP32 |
-| `pio run -t uploadfs` | 上传 data/ 目录到 SPIFFS 分区 |
-| `pio run -t erase` | 擦除 Flash（恢复出厂） |
-| `pio device monitor -p COMx -b 115200` | 打开串口监视器 |
+| `python deploy-tool/deploy_tool.py install` | 安装 paho-mqtt + 检查 pio-cli |
+| `python deploy-tool/deploy_tool.py flash -p COM5` | 编译 + 上传固件 + SPIFFS |
+| `python deploy-tool/deploy_tool.py flash-spi` | 仅上传 SPIFFS 数据分区 |
+| `python deploy-tool/deploy_tool.py monitor -p COM5` | 打开串口监视器 |
+| `python deploy-tool/deploy_tool.py send --state running -m "测试"` | MQTT 发送状态 |
+| `python deploy-tool/deploy_tool.py listen` | 监听并解析 MQTT 消息 |
+| `python deploy-tool/deploy_tool.py config` | 交互式编辑 WiFi/MQTT 配置 |
+| `python deploy-tool/deploy_tool.py all -p COM5` | 一键全流程 |
+
+详见 [`deploy-tool/README.md`](deploy-tool/README.md)。
 
 **注意事项：**
 - ESP32 需要在 **PlatformIO → Device → Enter Firmware Download Mode** 后按一次板载 BOOT 按钮才能识别
