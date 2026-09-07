@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 状态看板 — 工作流与系统架构</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2a2d3a;
+  --text: #c5c9d6;
+  --heading: #e4e7f0;
+  --accent: #6c8cff;
+  --green: #4ade80;
+  --yellow: #facc15;
+  --red: #f87171;
+  --cyan: #22d3ee;
+  --purple: #a78bfa;
+  --mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+h1 {
+  font-size: 1.8rem;
+  color: var(--heading);
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: .4em;
+  margin-bottom: 2rem;
+}
+h2 {
+  font-size: 1.35rem;
+  color: var(--heading);
+  margin: 2.5rem 0 1rem;
+  padding-left: .6em;
+  border-left: 3px solid var(--accent);
+}
+h3 {
+  font-size: 1.1rem;
+  color: var(--heading);
+  margin: 1.8rem 0 .8em;
+}
+p, li { font-size: .95rem; }
+ul, ol { padding-left: 1.4em; }
+li { margin: .25em 0; }
+
+/* diagram boxes */
+.diagram {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.2rem 1.5rem;
+  font-family: var(--mono);
+  font-size: .85rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 1rem 0 1.5rem;
+  color: var(--accent);
+}
+.diagram .arr { color: var(--green); }
+.diagram .skip { color: var(--yellow); }
+.diagram .err { color: var(--red); }
+
+/* code */
+code {
+  font-family: var(--mono);
+  font-size: .85em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .15em .4em;
+  color: var(--cyan);
+}
+pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  margin: 1rem 0 1.5rem;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+}
+
+/* tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 1.5rem;
+  font-size: .9rem;
+}
+th, td {
+  text-align: left;
+  padding: .55em .8em;
+  border: 1px solid var(--border);
+}
+th {
+  background: var(--surface);
+  color: var(--heading);
+  font-weight: 600;
+}
+tr:hover { background: rgba(108,140,255,.04); }
+
+/* badges */
+.badge {
+  display: inline-block;
+  font-size: .75em;
+  font-weight: 600;
+  padding: .15em .5em;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+.badge-green  { background: rgba(74,222,128,.15); color: var(--green); }
+.badge-yellow { background: rgba(250,204,21,.15); color: var(--yellow); }
+.badge-red    { background: rgba(248,113,113,.15); color: var(--red); }
+.badge-cyan   { background: rgba(34,211,238,.15); color: var(--cyan); }
+.badge-purple { background: rgba(167,139,250,.15); color: var(--purple); }
+
+/* section anchors */
+.section-anchor { scroll-margin-top: 1.5rem; }
+
+/* responsive */
+@media (max-width: 640px) {
+  body { padding: 1rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.15rem; }
+  table { font-size: .82rem; }
+  th, td { padding: .4em .5em; }
+}
+</style>
+</head>
+<body>
+
+<h1>AI 状态看板 — 工作流与系统架构说明</h1>
+
+<nav id="toc" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.2rem 1.5rem;margin-bottom:2rem;">
+<strong style="color:var(--heading)">目录</strong>
+<ul style="margin-top:.5em;padding-left:1.2em;">
+<li><a href="#s1" style="color:var(--accent)">一、系统总览</a></li>
+<li><a href="#s2" style="color:var(--accent)">二、MQTT 协议详解</a>
+  <ul>
+    <li><a href="#s21" style="color:var(--text)">2.1 Topic 列表</a></li>
+    <li><a href="#s22" style="color:var(--text)">2.2 ai/status JSON 格式</a></li>
+    <li><a href="#s23" style="color:var(--text)">2.3 ai/led/command 消息格式</a></li>
+    <li><a href="#s24" style="color:var(--text)">2.4 ESP32 发出的心跳</a></li>
+  </ul>
+</li>
+<li><a href="#s3" style="color:var(--accent)">三、ESP32 启动流程</a></li>
+<li><a href="#s4" style="color:var(--accent)">四、AP 配网流程</a></li>
+<li><a href="#s5" style="color:var(--accent)">五、主循环 loop() 职责</a></li>
+<li><a href="#s6" style="color:var(--accent)">六、MQTT 回调 mqttCallback() 处理顺序</a></li>
+<li><a href="#s7" style="color:var(--accent)">七、显示面板渲染引擎</a></li>
+<li><a href="#s8" style="color:var(--accent)">八、Pi 端配置步骤</a></li>
+<li><a href="#s9" style="color:var(--accent)">九、错误恢复机制</a></li>
+<li><a href="#s10" style="color:var(--accent)">十、文件映射表</a></li>
+</ul>
+</nav>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s1">
+<h2>一、系统总览</h2>
+<div class="diagram"><span style="color:#e4e7f0">┌──────────────┐</span>            <span style="color:#4ade80">MQTT</span>              <span style="color:#e4e7f0">┌─────────────────┐</span>
+<span style="color:#6c8cff">│   你的电脑    │</span>     <span class="arr">publish ai/status</span>         <span style="color:#e4e7f0">│    ESP32 设备     │</span>
+<span style="color:#6c8cff">│   (Pi 端)    │</span> <span class="arr"> ────────────────────────────→</span>  <span style="color:#e4e7f0">│  (CYD 接收器)    │</span>
+<span style="color:#c5c9d6">│              │</span>   <span style="font-size:.9em;color:#888">单向消息推送</span>          <span style="color:#c5c9d6">│                 │</span>
+<span style="color:#c5c9d6">│ paho-mqtt    │</span>                               <span style="color:#c5c9d6">│  WiFi → Broker  │</span>
+<span style="color:#c5c9d6">│              │</span>                               <span style="color:#c5c9d6">│  MQTT subscribe │</span>
+<span style="color:#e4e7f0">└──────────────┘</span>                               <span style="color:#e4e7f0">└─────────────────┘</span>
+                                                   │
+                                                    ▼
+                                             <span style="color:#e4e7f0">┌─────────────┐</span>
+                                             <span style="color:#e4e7f0">│  TFT 2.8"   │</span>
+                                             <span style="color:#e4e7f0">│  240x320    │</span>
+                                             <span style="color:#e4e7f0">│  实时渲染    │</span>
+                                             <span style="color:#e4e7f0">└─────────────┘</span></div>
+<p><strong>核心设计原则：</strong>单向推送。Pi 只管发消息到 MQTT Broker，ESP32 被动监听并渲染屏幕。没有握手、没有轮询、没有回调需求。</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s2">
+<h2>二、MQTT 协议详解</h2>
+
+<h3 class="section-anchor" id="s21">2.1 Topic 列表</h3>
+<table>
+<thead><tr><th>Topic</th><th>方向</th><th>ESP32 行为</th></tr></thead>
+<tbody>
+<tr><td><code>ai/status</code></td><td><span class="badge badge-green">Pi → ESP32</span></td><td>解析 JSON 渲染状态</td></tr>
+<tr><td><code>ai/status</code></td><td><span class="badge badge-purple">ESP32 → Pi</span></td><td>心跳包 / LWT 离线宣告</td></tr>
+<tr><td><code>ai/led/command</code></td><td><span class="badge badge-green">Pi → ESP32</span></td><td>直接控制板载 LED（ESP32 不订阅此 topic）</td></tr>
+</tbody>
+</table>
+
+<h3 class="section-anchor" id="s22">2.2 ai/status JSON 格式</h3>
+<pre><code>{ "state": "&lt;状态名&gt;", "message": "描述文字" }</code></pre>
+<table>
+<thead><tr><th>state</th><th>含义</th><th>视觉表现</th></tr></thead>
+<tbody>
+<tr><td><code>"running"</code></td><td>执行中</td><td><span class="badge badge-yellow">金色背景</span> + 充电进度条动画</td></tr>
+<tr><td><code>"waiting"</code></td><td>等待中</td><td><span class="badge badge-cyan">青色背景</span> + 呼吸闪烁</td></tr>
+<tr><td><code>"idle"</code></td><td>空闲</td><td><span class="badge badge-green">天蓝背景</span>（仅当 message ≠ "keepalive"）</td></tr>
+<tr><td><code>"done"</code></td><td>完成</td><td><span class="badge badge-green">翠绿背景</span></td></tr>
+<tr><td><code>"error"</code></td><td>出错</td><td><span class="badge badge-red">鲜红背景</span></td></tr>
+<tr><td><code>"critical"</code></td><td>严重故障</td><td><span class="badge badge-red">暗红背景</span>交替闪烁（ESP32 自动生成）</td></tr>
+<tr><td><code>"cmd"</code></td><td>命令态</td><td><span class="badge badge-yellow">橙红涟漪</span></td></tr>
+<tr><td><code>"init"</code></td><td>启动中</td><td><span class="badge" style="background:rgba(120,120,120,.2);color:#999">灰色兜底</span></td></tr>
+</tbody>
+</table>
+
+<p><span style="color:#facc15;">⚠ 注意：</span>原 Pi 工作流框架发出的心跳被扩展为 <code>{"state":"idle","message":"keepalive"}</code>，ESP32 会跳过这类消息的渲染（避免覆盖当前显示的活跃状态），但仍会触发息屏计时唤醒。</p>
+
+<h3 class="section-anchor" id="s23">2.3 ai/led/command 消息格式</h3>
+<p>纯文本字符串 Payload：</p>
+<table>
+<thead><tr><th>值</th><th>效果</th></tr></thead>
+<tbody>
+<tr><td><code>"red"</code></td><td>红灯</td></tr>
+<tr><td><code>"green"</code></td><td>绿灯（GPIO16）</td></tr>
+<tr><td><code>"blue"</code></td><td>蓝灯（GPIO17）</td></tr>
+<tr><td><code>"blink:red"</code></td><td>红灯闪烁 1 Hz（冒号后提取颜色名）</td></tr>
+<tr><td><code>"breath:purple"</code></td><td>紫色呼吸</td></tr>
+</tbody>
+</table>
+
+<h3 class="section-anchor" id="s24">2.4 ESP32 发出的心跳</h3>
+<p>每 <strong>30 秒</strong>（<code>HEARTBEAT_INTERVAL_MS</code>）向 <code>ai/status</code> 发布：</p>
+<pre><code>{ "state": "heartbeat" }</code></pre>
+<p>LWT（Will 遗嘱）——连接时注册，断线自动发出：</p>
+<pre><code>{ "state": "offline" }</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s3">
+<h2>三、ESP32 启动流程</h2>
+<div class="diagram"><span style="color:#e4e7f0">上电
+  ↓
+Serial.begin(115200)          ← 串口初始化，输出调试日志
+  ↓
+g_display.begin()             ← 初始化屏幕，分配 Sprite 内存 (~190 KB heap)
+  ↓
+applyState("init", "系统启动中") ← 显示灰色兜底页
+  ↓
+loadConfig()                  ← 读取 SPIFFS/config.json
+  ├── 不存在 → 使用 Config.h 硬编码默认值
+  └── 存在 → 解析 JSON 填充 RuntimeConfig
+  ↓
+connectWiFi(20000ms)          ← 尝试 STA 模式连接 WiFi
+  ├── 成功 → 继续
+  └── 失败 → startApConfig()（见第四节）
+  ↓
+configTime(NTP servers)       ← 同步时间（阿里云 / pool.org / 腾讯）
+  ↓
+connectMQTT()                 ← 连接 MQTT Broker
+  ├── 成功 → 订阅 ai/status QoS 1，发布 {"state":"idle"} 宣告上线
+  └── 失败 → applyState("idle", "等待重连"), loop 中每 10 s 重试
+  ↓
+loop() 进入主循环              ← 见第五节</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s4">
+<h2>四、AP 配网流程</h2>
+<p>当 <code>connectWiFi()</code> 超时 <strong>20 秒</strong>未连接成功（首次启动 / 新网络 / 密码变更 / config.json 丢失）：</p>
+<div class="diagram"><span style="color:#e4e7f0">startApConfig()
+  ├── WiFi.mode(WIFI_AP)                    ← 切换为热点模式
+  ├── WiFi.softAP("AI-Status-XXXX")          ← MAC 末两位大写区分多台设备
+  ├── DNS server 启动（域名劫持 * → 192.168.4.1）
+  ├── WebServer 监听 80 端口
+  │   ├── GET /        → 返回 HTML 配置表单
+  │   └── POST /save   → 写入 SPIFFS/config.json + ESP.restart()
+  └── 阻塞循环                                 ← dns.processNextRequest() + server.handleClient()
+                                                期间每 100 ms 调用 g_refreshFn() 保活屏幕</span></div>
+<p><strong>用户操作：</strong></p>
+<ol>
+<li>手机/电脑连接热点 <code>AI-Status-XXXX</code></li>
+<li>浏览器访问 <code>http://192.168.4.1</code>（或任何域名均被 DNS 劫持到此页面）</li>
+<li>填写 WiFi SSID/密码、MQTT Host/Port</li>
+<li>点击"保存并重启"</li>
+<li>ESP32 写入 <code>/config.json</code> → 重启 → 回到第二节启动流程</li>
+</ol>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s5">
+<h2>五、主循环 loop() 职责</h2>
+<div class="diagram"><span style="color:#e4e7f0">loop() {
+    // 1. WiFi 连接管理
+    if (!connected) {
+        enterOfflineMode();            // 屏幕变暗
+        if (now - lastReconnect >= 5 s) connectWiFi(10 s);  // 每 5 秒重连
+    } else {
+        // 2. NTP 重试（每分钟，直到 time(nullptr) > 1600000000）
+        if (ntpFailed && now - lastNtpRetry >= 60 s) configTime(...);
+
+        // 3. MQTT 管理
+        if (!mqttClient.connected()) {
+            connectMQTT();
+            if (failCount >= 3) enterCriticalState();  // 持续失败触发红色报警
+        } else {
+            mqttClient.loop();                    // 处理收到的订阅消息
+            if (now - lastHeartbeat >= 30 s) publishHeartbeat();
+        }
+    }
+
+    // 4. 超时降级：启动 10 s 内没收到任何状态消息 → idle
+    if (!initialStateLoaded && wifiOK && mqttOK && now > 10 s) {
+        applyState("idle", "等待任务");
+    }
+
+    // 5. 更新看板
+    g_display.update();        // 每秒刷新时钟 + 检测状态变化
+}</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s6">
+<h2>六、MQTT 回调 mqttCallback() 处理顺序</h2>
+<div class="diagram"><span style="color:#e4e7f0">收到消息
+  ↓
+notifyActivity()              ← 刷新息屏计时并唤醒背光
+  ↓
+topic == "ai/led/command" ?
+  ├── 是 → 解析颜色名 → setState("cmd", colorName) → 返回
+  └── 否：继续
+  ↓
+topic == "ai/status"
+  ↓
+解析 JSON
+  ↓
+msg.state == null <span class="err">?</span> <span class="err">→ log error → 返回</span>
+  ↓
+msg.state ∈ {"heartbeat", "offline"} OR msg.message == "keepalive" <span class="skip">?</span>
+  ├── 是 → <span class="skip">不改变显示 → 返回</span>（但已唤醒过屏幕）
+  └── 否：继续
+  ↓
+g_initialStateLoaded = true;
+g_criticalTriggered = false;
+applyState(msg.state, msg.message)   ← 最终渲染</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s7">
+<h2>七、显示面板渲染引擎</h2>
+
+<h3 class="section-anchor" id="s71">7.1 布局结构</h3>
+<div class="diagram"><span style="color:#e4e7f0">┌─────────────────────────────┐  FRAME_H = 30 px（上边框白色条）
+│ 左上: 日期 (Font2)          │
+│        右上: 时钟 (Font4)    │
+│                             │
+│                             │
+│        [大字区 Sprite]       │  ← 离屏渲染，切换时一次推屏
+│   [消息描述文字居中]         │
+│                             │
+│                             │
+├─────────────────────────────┤  MID_BOT 分界
+│ 左: WiFi[M]  MQTT[O]  NTP[O]|  FRAME_H = 30 px（下边框白色条）
+│                        OFFLINE│  息屏时显示
+└─────────────────────────────┘</span></div>
+
+<h3 class="section-anchor" id="s72">7.2 各状态的视觉表现</h3>
+<table>
+<thead><tr><th>状态</th><th>背景色</th><th>文字色</th><th>动效</th></tr></thead>
+<tbody>
+<tr><td><code>running</code></td><td><span class="badge badge-yellow">#FFD700 金</span></td><td>深灰</td><td>底部绿色充电式进度条</td></tr>
+<tr><td><code>waiting</code></td><td><span class="badge badge-cyan">#00CED1 青</span></td><td>白</td><td>整框明暗呼吸</td></tr>
+<tr><td><code>idle</code></td><td><span class="badge" style="background:rgba(135,206,235,.2);color:#87CEEB">#87CEEB 天蓝</span></td><td>白</td><td>静态</td></tr>
+<tr><td><code>done</code></td><td><span class="badge badge-green">#00FA9A 翠绿</span></td><td>白</td><td>静态</td></tr>
+<tr><td><code>error</code></td><td><span class="badge badge-red">#DC143C 鲜红</span></td><td>白</td><td>静态</td></tr>
+<tr><td><code>critical</code></td><td><span class="badge" style="background:rgba(139,0,0,.2);color:#8B0000">#8B0000 暗红</span></td><td>白</td><td>左右翻转交替闪烁</td></tr>
+<tr><td><code>cmd</code></td><td><span class="badge badge-yellow">橙红</span></td><td>白</td><td>涟漪扩散</td></tr>
+<tr><td>离线</td><td>灰色半透明</td><td>—</td><td><code>setDimmed()</code> 降低亮度</td></tr>
+</tbody>
+</table>
+
+<h3 class="section-anchor" id="s73">7.3 Sprite 离屏渲染</h3>
+<p>为避免逐字闪屏，大字区使用 <code>TFT_eSprite m_mid</code> 在 SRAM 中预渲染，完成后一次性 <code>pushSprite()</code> 推屏。内存不足时自动回退到直接绘制。</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s8">
+<h2>八、Pi 端配置步骤</h2>
+
+<h3 class="section-anchor" id="s81">8.1 环境准备</h3>
+<pre><code>pip install paho-mqtt</code></pre>
+
+<h3 class="section-anchor" id="s82">8.2 Python 示例代码</h3>
+<pre><code>import paho.mqtt.client as mqtt
+import json
+
+def publish_state(state, message=""):
+    """推送到 ESP32 看板"""
+    client = mqtt.Client()
+    client.connect("broker.emqx.io", 1883)
+    payload = {"state": state, "message": message}
+    client.publish("ai/status", json.dumps(payload))
+    client.disconnect()
+
+# 示例：工作流状态机
+if task_succeeded:
+    publish_state("running", "数据处理中...")
+elif task_completed:
+    publish_state("done", "已完成")
+else:
+    publish_state("error", str(error_msg))</code></pre>
+
+<h3 class="section-anchor" id="s83">8.3 集成到 Agent 框架</h3>
+<p>在你的 Agent 工作流结束位置加一行：</p>
+<pre><code># 伪代码
+result = run_agent_workflow()
+publish_state("running" if result else "error", str(result)[:50])</code></pre>
+<p>不需要后台守护进程、不需要配置文件、不需要定时轮询。<strong>纯单向发布一次即可。</strong></p>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s9">
+<h2>九、错误恢复机制</h2>
+<table>
+<thead><tr><th>故障场景</th><th>检测方式</th><th>恢复行为</th></tr></thead>
+<tbody>
+<tr><td>WiFi 断开</td><td><code>WiFi.status() != WL_CONNECTED</code></td><td>立即 dim 屏幕，每 5 s 尝试重连</td></tr>
+<tr><td>WiFi 重连成功</td><td><code>WL_CONNECTED</code> 恢复</td><td>退出 dim，恢复 MQTT 连接</td></tr>
+<tr><td>MQTT 断开</td><td><code>!client.connected()</code></td><td>进入 dim，每 10 s 重连</td></tr>
+<tr><td>MQTT 连续失败 ≥ 3 次</td><td><code>g_mqttConnectFailCount >= 3</code></td><td><code>enterCriticalState()</code> 红底报警 + 文字提示</td></tr>
+<tr><td>SPIFFS config 丢失</td><td><code>!SPIFFS.exists("/config.json")</code></td><td>使用 Config.h 硬编码值作为 fallback</td></tr>
+<tr><td>NTP 未同步</td><td><code>time(nullptr) &lt; 1600000000</code></td><td>每分钟重试，时钟显示 <code>UP Xmin</code></td></tr>
+<tr><td>长时间无状态消息</td><td><code>millis() &gt; 10000</code> 且未收到</td><td>降级到 <code>idle("等待任务")</code></td></tr>
+<tr><td>息屏超时</td><td><code>millis() - lastActivityMs &gt;= 30 s</code></td><td>关闭背光 + LED，下次消息瞬间唤醒</td></tr>
+</tbody>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<section class="section-anchor" id="s10">
+<h2>十、文件映射表</h2>
+<table>
+<thead><tr><th>文件</th><th>职责</th></tr></thead>
+<tbody>
+<tr><td><code>src/main.cpp</code></td><td>入口、WiFi/MQTT/NTP 管理、loop 主循环、回调处理</td></tr>
+<tr><td><code>src/DisplayPanel.cpp</code></td><td>屏幕渲染引擎（边框 / 状态块 / 动效 / Sprite）</td></tr>
+<tr><td><code>src/StatusRegistry.cpp</code></td><td>内置 + 自定义状态的配色注册表</td></tr>
+<tr><td><code>src/ApConfig.cpp</code></td><td>SoftAP + DNS 劫持 + HTTP 表单配网页</td></tr>
+<tr><td><code>include/Config.h</code></td><td>全局常量（WiFi/MQTT/NTP/引脚/尺寸）</td></tr>
+<tr><td><code>include/DisplayPanel.h</code></td><td>屏幕类接口</td></tr>
+<tr><td><code>data/config.json</code></td><td>WiFi + MQTT 初始配置（上传到 SPIFFS）</td></tr>
+<tr><td><code>platformio.ini</code></td><td>编译目标、依赖库、TFT_eSPI 引脚定义</td></tr>
+</tbody>
+</table>
+</section>
+
+<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid var(--border);color:#666;font-size:.82rem;text-align:center;">
+AI_STATUS_FOR_ESP32-2432S028R · WORKFLOW.md · ISC License
+</footer>
+
+</body>
+</html>
