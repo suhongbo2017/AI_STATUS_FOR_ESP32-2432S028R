@@ -29,7 +29,7 @@ private:
     void renderMid(uint32_t now, bool force);  // 中间状态块（背景+文字）
     void renderCharge(uint32_t now);           // running 充电式进度条
     void renderDots(uint32_t now);             // waiting 打字三点动画
-    void renderFrame();                        // 上下白色边框
+    void renderFrame();                        // 上下白色边框（含日期渲染）
     void renderStatusIndicators();
     void refreshClock();
     uint16_t stateBg(float lum) const;         // 状态纯色块背景（支持呼吸亮度）
@@ -40,11 +40,14 @@ private:
     TFT_eSPI m_tft;
     TFT_eSprite m_mid;    // 大字区离屏渲染（切换时一次推屏，消除逐字闪屏）
     bool m_midOk = false; // sprite 分配成功（内存不足时回退直接绘制）
+    String m_lastDate;    // 上次渲染的日期（变化时无需整块重绘）
     bool m_dimmed = false;
     bool m_wifiOk = false;
     bool m_mqttOk = false;
     const StateDef* m_state = nullptr;
     uint32_t m_lastClockMs = 0;
+    bool m_ntpOk = false;                    // 当前 NTP 是否已同步（驱动底栏指示灯）
+    bool m_ntpOkLast = false;                // 上次 NTP 同步状态变化（区分首次 vs 指示器颜色切换）
     uint32_t m_lastAnimMs = 0;
     bool m_needFullRedraw = true;
     bool m_needChangedRedraw = false;

@@ -17,6 +17,7 @@
 #include "Config.h"
 #include "StatusRegistry.h"
 #include "DisplayPanel.h"
+#include "ApConfig.h"
 
 // ====== 全局对象 ======
 DisplayPanel g_display;
@@ -105,8 +106,8 @@ bool loadConfig() {
     return true;
 }
 
-// ====== WiFi 连接 ======
-void connectWiFi() {
+// ====== WiFi 连接（阻塞等待 timeoutMs；失败返回 false）======
+bool connectWiFi(unsigned long timeoutMs) {
     Serial.print("[WiFi] 正在连接 ");
     Serial.print(g_config.wifiSsid);
     Serial.print(" ... ");
@@ -115,7 +116,7 @@ void connectWiFi() {
     WiFi.begin(g_config.wifiSsid, g_config.wifiPassword);
 
     unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
         delay(10);
     }
 
@@ -125,11 +126,32 @@ void connectWiFi() {
         g_wifiConnected = true;
         g_offlineMode = false;
         g_display.setNetworkStatus(true, g_mqttConnected);
-    } else {
-        Serial.println(" 超时失败!");
-        g_wifiConnected = false;
-        g_display.setNetworkStatus(false, false);
+        return true;
     }
+    Serial.println(" 超时失败!");
+    g_wifiConnected = false;
+    g_display.setNetworkStatus(false, false);
+    return false;
+}
+
+// ====== AP 配网：保存配置到 SPIFFS 后重启 ======
+void onApSave(const String& ssid, const String& pass,
+              const String& host, const String& port) {
+    File f = SPIFFS.open("/config.json", "w");
+    if (f) {
+        JsonDocument doc;
+        doc["wifi"]["ssid"] = ssid;
+        doc["wifi"]["password"] = pass;
+        doc["mqtt"]["host"] = host;
+        doc["mqtt"]["port"] = port.toInt();
+        serializeJson(doc, f);
+        f.close();
+        Serial.println("[配网] 配置已保存到 SPIFFS");
+    } else {
+        Serial.println("[配网] ERROR: 保存配置失败");
+    }
+    delay(800);
+    ESP.restart();
 }
 
 // ====== MQTT 回调 ======
@@ -293,9 +315,27 @@ void setup() {
     applyState("init", "系统启动中");
 
     loadConfig();
-    connectWiFi();
+
+    // 尝试连接 WiFi：失败（新网络/无配置/密码变更）则进入 AP 配网模式
+    if (!connectWiFi(20000)) {
+        Serial.println("[配网] WiFi 连接失败，启动 AP 配网模式");
+        Serial.println("[配网] 用手机连接热点，浏览器访问 http://192.168.4.1 完成配置");
+        g_display.setState("waiting", "");  // 青色等待输入
+        startApConfig("AI-Status",
+                      g_config.wifiSsid, g_config.wifiPassword,
+                      g_config.mqttBroker, String(g_config.mqttPort).c_str(),
+                      onApSave,
+                      []() {
+                          // 配网期间驱动屏幕刷新并保活（不下线、不息屏）
+                          g_display.notifyActivity();
+                          g_display.update();
+                      });
+        // 配置保存成功后在 onApSave 中重启，不会执行到这里
+    }
 
     if (g_wifiConnected) {
+        configTime(NTP_GMT_OFFSET_SEC, 0, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
+        Serial.println("[NTP] 已配置（阿里云 / pool.ntp.org / 腾讯）");
         connectMQTT();
     }
 
@@ -325,12 +365,22 @@ void loop() {
 
         if (now - g_lastWifiReconnectMs >= 5000) {
             g_lastWifiReconnectMs = now;
-            connectWiFi();
+            connectWiFi(10000);
         }
     } else {
         if (!g_wifiConnected) {
             g_wifiConnected = true;
             Serial.println("[WiFi] 已重新连接");
+        }
+
+        // ====== NTP 重试：同步前每分钟检查并重试一次 ======
+        static unsigned long lastNtpRetryMs = 0;
+        if (now - lastNtpRetryMs >= 60000) {
+            lastNtpRetryMs = now;
+            if (time(nullptr) < 1600000000) {
+                configTime(NTP_GMT_OFFSET_SEC, 0, NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
+                Serial.println("[NTP] 未同步，重试中…");
+            }
         }
 
         // ====== MQTT 连接管理 ======

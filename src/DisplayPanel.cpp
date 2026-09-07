@@ -66,8 +66,7 @@ void DisplayPanel::begin() {
     pinMode(LED_BLUE_PIN, OUTPUT);
     ledWrite(LED_GREEN_PIN, false);
     ledWrite(LED_BLUE_PIN, false);
-
-    configTime(NTP_GMT_OFFSET_SEC, 0, NTP_SERVER1, NTP_SERVER2);
+    // 注意：configTime 由 main.cpp 在 WiFi 连接成功后调用（NTP 依赖网络）
 }
 
 uint16_t DisplayPanel::stateBg(float lum) const {
@@ -214,9 +213,10 @@ void DisplayPanel::renderCharge(uint32_t now) {
     }
 }
 
-// ====== 上下白色边框 ======
+// ====== 上下白色边框（整块重绘）======
 void DisplayPanel::renderFrame() {
     m_tft.fillRect(0, 0, SCREEN_WIDTH, FRAME_H, FRAME_COLOR);
+    // 左侧日期
     m_tft.setTextFont(2);
     m_tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
     m_tft.setTextDatum(TL_DATUM);
@@ -225,18 +225,17 @@ void DisplayPanel::renderFrame() {
     if (now > 1600000000) {
         struct tm* t = localtime(&now);
         if (t != nullptr) {
-            char dateBuf[16];
-            strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", t);
-            m_tft.print(dateBuf);
+            char buf[16];
+            strftime(buf, sizeof(buf), "%Y-%m-%d", t);
+            m_tft.print(buf);
         }
     } else {
         m_tft.print("-- -- --");
     }
-    refreshClock();
-
     renderStatusIndicators();
 }
 
+// ====== 底栏指示灯（WiFi/MQTT/NTP）======
 void DisplayPanel::renderStatusIndicators() {
     m_tft.fillRect(0, MID_BOT, SCREEN_WIDTH, FRAME_H, FRAME_COLOR);
     const int yText = MID_BOT + (FRAME_H - 16) / 2;  // Font2 16px 文字垂直居中
@@ -273,12 +272,14 @@ void DisplayPanel::renderStatusIndicators() {
     }
 }
 
-void DisplayPanel::refreshClock() {
-    // 只刷新上边框右侧时间区域
-    m_tft.fillRect(150, 2, SCREEN_WIDTH - 154, FRAME_H - 4, FRAME_COLOR);
-    m_tft.setTextFont(4);
-    m_tft.setTextDatum(TR_DATUM);
-    m_tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
+// ====== 顶部右侧时钟（仅刷新时间区域，每秒调用）======
+static void renderTimeOnly(TFT_eSPI& tft) {
+    const int timeW = 74;           // Font4 约 64px + 边距
+    const int timeX = SCREEN_WIDTH - timeW - 8;
+    tft.fillRect(timeX, 2, timeW, FRAME_H - 4, FRAME_COLOR);
+    tft.setTextFont(4);
+    tft.setTextDatum(TR_DATUM);
+    tft.setTextColor(FRAME_TEXT, FRAME_COLOR);
     char buf[16];
     time_t now = time(nullptr);
     if (now > 1600000000) {
@@ -288,8 +289,25 @@ void DisplayPanel::refreshClock() {
     } else {
         snprintf(buf, sizeof(buf), "UP %lum", (unsigned long)(millis() / 60000));
     }
-    m_tft.drawString(buf, SCREEN_WIDTH - 8, 2);
-    m_tft.setTextDatum(TL_DATUM);
+    tft.drawString(buf, SCREEN_WIDTH - 8, 2);
+    tft.setTextDatum(TL_DATUM);
+}
+
+void DisplayPanel::refreshClock() {
+    // NTP 首次同步成功 → 立即重绘整帧（日期立刻出现）
+    bool ntpOkNow = time(nullptr) > 1600000000;
+    if (!m_ntpOk && ntpOkNow) {
+        m_ntpOk = true;
+        renderFrame();              // 含日期 + 时钟 + 底栏指示灯全部刷新
+        return;                     // 上面已全刷，不需要再画时间
+    }
+    if (ntpOkNow != m_ntpOkLast) {
+        m_ntpOkLast = ntpOkNow;
+        renderStatusIndicators();
+    }
+
+    // 仅刷新上边框右侧时钟区域
+    renderTimeOnly(m_tft);
 }
 
 void DisplayPanel::update() {

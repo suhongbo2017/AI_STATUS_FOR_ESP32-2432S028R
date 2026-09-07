@@ -25,6 +25,7 @@
 // ====== NTP ======
 #define NTP_SERVER1     "ntp.aliyun.com"
 #define NTP_SERVER2     "pool.ntp.org"
+#define NTP_SERVER3     "ntp.tencent.com"
 #define NTP_GMT_OFFSET_SEC (8 * 3600)       // 东八区
 
 // ====== 屏幕 ======
